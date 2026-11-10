@@ -67,11 +67,22 @@ private:
     bool createBLASes(const sceneutil::FlatScene& flatScene);
     bool createTLAS(const sceneutil::FlatScene& flatScene);
 
-    bool buildAccelStructure(
+    bool createAccelStructure(
+        VkAccelerationStructureTypeKHR type,
+        const std::vector<VkAccelerationStructureGeometryKHR>& geometries,
+        const std::vector<uint32_t>& maxPrimitiveCounts,
+        VkBuildAccelerationStructureFlagsKHR flags,
+        AccelStructure& accelStructure,
+        VkDeviceSize& scratchSize);
+
+    void recordAccelStructureBuild(
+        VkCommandBuffer commandBuffer,
         VkAccelerationStructureTypeKHR type,
         const std::vector<VkAccelerationStructureGeometryKHR>& geometries,
         const std::vector<VkAccelerationStructureBuildRangeInfoKHR>& buildRanges,
-        AccelStructure& accelStructure);
+        VkBuildAccelerationStructureFlagsKHR flags,
+        const AccelStructure& accelStructure,
+        VkDeviceAddress scratchAddress);
 
     void destroyAccelStructure(AccelStructure& accelStructure);
 
