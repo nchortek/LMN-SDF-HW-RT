@@ -6,7 +6,7 @@
             "TYPE":"Diffuse",
             "RGB":[0.85,0.85,0.85]
         },
-	"light":
+        "light":
         {
             "TYPE":"Emitting",
             "RGB":[1.0, 1.0, 1.0],
