@@ -101,6 +101,7 @@ set(headers
     src/utilities.h
     src/gpu/shared.h
     src/gpu/sdf_shared.h
+    src/sdf/bricks.h
     src/vk/context.h
     src/vk/swapchain.h
     src/vk/renderer.h
@@ -117,6 +118,7 @@ set(sources
     src/sceneUtils.cpp
     src/stb.cpp
     src/utilities.cpp
+    src/sdf/bricks.cpp
     src/vk/context.cpp
     src/vk/swapchain.cpp
     src/vk/vma_impl.cpp

@@ -15,6 +15,8 @@
 #include "vk/swapchain.h"
 #include "vk/gpuscene.h"
 
+#include "sdf/bricks.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -266,6 +268,24 @@ int main(int argc, char** argv)
 
     // Load scene file
     scene = new Scene(sceneFile);
+
+    if (scene->hasSdf)
+    {
+        bricksutil::BricksFile bricks;
+        if (!bricksutil::readBricks(scene->sdfBricksPath.c_str(), bricks))
+        {
+            return 1;
+        }
+
+        printf("Loaded %s: brickCount %u, domainMin (%g, %g, %g), voxelSize %g, band %g\n",
+            scene->sdfBricksPath.c_str(),
+            bricks.brickCount,
+            bricks.domainMin[0],
+            bricks.domainMin[1],
+            bricks.domainMin[2],
+            bricks.voxelSize,
+            bricks.band);
+    }
 
     //Create Instance for ImGUIData
     guiData = new GuiDataContainer();

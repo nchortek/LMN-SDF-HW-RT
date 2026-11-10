@@ -16,6 +16,16 @@ public:
     std::vector<Material> materials;
     RenderState state;
 
+    // Whether or not the scene contains SDF data
+    bool hasSdf = false;
+
+    // The .bricks filepath (The JSON file contains a filepath relative to the scene
+    // JSON's folder, but we store it here relative to the working directory)
+    std::string sdfBricksPath;
+
+    // The index of the SDF material in the Scene::materials vector
+    uint32_t sdfMaterialIdx = 0;
+
 private:
     static constexpr uint32_t kCubeMeshIndex = 0;
     static constexpr uint32_t kSphereMeshIndex = 1;
