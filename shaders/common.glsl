@@ -4,6 +4,7 @@
 // This must always come first, since it includes extensions and structs
 // shared between Cpp and GLSL
 #include "gpu/shared.h"
+#include "gpu/sdf_shared.h"
 
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer VertexBuffer
 {
@@ -33,6 +34,16 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer Lig
 layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer SceneAddressesBuffer
 {
     SceneAddresses deviceAddresses;
+};
+
+layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer SdfSceneAddressesBuffer
+{
+    SdfSceneAddresses sdfDeviceAddresses;
+};
+
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer AabbBuffer
+{
+    Aabb aabbs[];
 };
 
 // Constants/Sentinels

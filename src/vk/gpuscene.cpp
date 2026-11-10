@@ -1,6 +1,7 @@
 #include "gpuscene.h"
 
 #include "context.h"
+#include "gpu/sdf_shared.h"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -130,6 +131,7 @@ bool GpuScene::createSceneAddressesBuffer(uint32_t lightCount, float totalLightA
     sceneAddresses.geometriesAddr = m_geometryBuffer.deviceAddress;
     sceneAddresses.materialsAddr = m_materialBuffer.deviceAddress;
     sceneAddresses.lightsAddr = m_lightBuffer.deviceAddress;
+    sceneAddresses.sdfAddr = gpu::kNullAddress;
     sceneAddresses.lightCount = lightCount;
     sceneAddresses.totalLightArea = totalLightArea;
 

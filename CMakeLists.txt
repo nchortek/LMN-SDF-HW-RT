@@ -100,6 +100,7 @@ set(headers
     src/sceneUtils.h
     src/utilities.h
     src/gpu/shared.h
+    src/gpu/sdf_shared.h
     src/vk/context.h
     src/vk/swapchain.h
     src/vk/renderer.h
