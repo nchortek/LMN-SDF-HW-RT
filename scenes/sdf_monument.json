@@ -1,0 +1,26 @@
+{
+    "Materials":
+    {
+        "sdf_white":
+        {
+            "TYPE":"Diffuse",
+            "RGB":[0.85,0.85,0.85]
+        }
+    },
+    "SDF":
+    {
+        "BRICKS":"monument.bricks",
+        "MATERIAL":"sdf_white"
+    },
+    "Camera":
+    {
+        "RES":[1920,1080],
+        "FOVY":45.0,
+        "ITERATIONS":5000,
+        "DEPTH":8,
+        "FILE":"sdf_monument",
+        "EYE":[0.0,0.0,3.0],
+        "LOOKAT":[0.0,0.0,0.0],
+        "UP":[0.0,1.0,0.0]
+    }
+}

@@ -23,6 +23,8 @@ layout(push_constant, scalar) uniform PushConstantBlock
 // The location must match the last argument of traceRayEXT.
 layout(location = 0) rayPayloadEXT IntersectionInfo payload;
 
+vec3 primaryRayDirection(vec2 pixel);
+vec3 debugViewColor(Ray ray);
 SurfaceInteraction sceneIntersect(Ray ray);
 vec3 li_naive(Ray ray);
 vec3 li_direct(Ray ray);
@@ -33,6 +35,9 @@ vec3 sample_li(vec3 viewPoint, vec3 faceForwardGeometricNor, out vec3 wiW, out f
 const float kFocalDistance = 11.5;
 const float kLensRadius = 0.5;
 
+// Debug view color for rays that hit nothing
+const vec3 kDebugViewMissColor = vec3(0.1);
+
 void main()
 {
     initSeed(gl_LaunchIDEXT, gl_LaunchSizeEXT, pc.renderedFrameCount);
@@ -40,14 +45,18 @@ void main()
     // gl_LaunchIDEXT (0,0) is the top-left image pixel,
     // and +y increases down the screen.
     const ivec2 pixelCoord = ivec2(gl_LaunchIDEXT.xy);
+
+    // The debug view traces one ray through the pixel center and writes its color straight
+    // to the display image, skipping the integrator and accumulation
+    if ((pc.flags & kFlagDebugView) != 0u)
+    {
+        Ray debugRay = Ray(pc.camera.position, primaryRayDirection(vec2(pixelCoord) + 0.5));
+        imageStore(displayImage, pixelCoord, vec4(debugViewColor(debugRay), 1.0));
+        return;
+    }
+
     const vec2 jitteredPixel = vec2(pixelCoord) + vec2(rng(), rng());
-    const vec2 halfResolution = vec2(gl_LaunchSizeEXT.xy) * 0.5;
-
-    vec3 direction = normalize(
-        pc.camera.view
-        + pc.camera.right * pc.camera.pixelLength.x * (jitteredPixel.x - halfResolution.x)
-        - pc.camera.up * pc.camera.pixelLength.y * (jitteredPixel.y - halfResolution.y));
-
+    vec3 direction = primaryRayDirection(jitteredPixel);
     vec3 origin = pc.camera.position;
 
     if ((pc.flags & kFlagDepthOfField) != 0u)
@@ -79,6 +88,36 @@ void main()
     vec4 displayColor = vec4(corrected.rgb, 1.f);
 
     imageStore(displayImage, pixelCoord, displayColor);
+}
+
+// World-space direction of the camera ray through a point on the image plane, given in pixels
+vec3 primaryRayDirection(vec2 pixel)
+{
+    const vec2 halfResolution = vec2(gl_LaunchSizeEXT.xy) * 0.5;
+
+    return normalize(
+        pc.camera.view
+        + pc.camera.right * pc.camera.pixelLength.x * (pixel.x - halfResolution.x)
+        - pc.camera.up * pc.camera.pixelLength.y * (pixel.y - halfResolution.y));
+}
+
+// Colors each primitive (triangle or SDF brick) by a hash of its primitive ID,
+// darkened on surfaces seen at grazing angles
+vec3 debugViewColor(Ray ray)
+{
+    SurfaceInteraction surface = sceneIntersect(ray);
+
+    if (surface.isect.t == kMiss)
+    {
+        return kDebugViewMissColor;
+    }
+
+    // Color each primitive based on the hash of its primitive ID
+    uint hash = utilhash(surface.isect.primitiveId);
+    vec3 primitiveColor = vec3(hash & 0xFFu, (hash >> 8) & 0xFFu, (hash >> 16) & 0xFFu) / 255.0;
+    float facingRatio = abs(dot(surface.isect.worldGeometricNor, -ray.direction));
+
+    return primitiveColor * (0.3 + 0.7 * facingRatio);
 }
 
 SurfaceInteraction sceneIntersect(Ray ray)

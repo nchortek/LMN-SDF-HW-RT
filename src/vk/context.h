@@ -30,7 +30,7 @@ public:
     VulkanContext(VulkanContext&&) = delete;
     VulkanContext& operator=(VulkanContext&&) = delete;
 
-    bool init(GLFWwindow* window, bool enableValidation = false);
+    bool init(GLFWwindow* window, bool enableValidation = true);
     void destroy();
 
     VkCommandBuffer beginSingleTimeCommands();
@@ -83,6 +83,12 @@ public:
     const VkPhysicalDeviceRayTracingPipelinePropertiesKHR& getRtProperties() const
     {
         return m_rtProperties;
+    }
+
+    // Nanoseconds per GPU timestamp tick
+    float getTimestampPeriod() const
+    {
+        return m_deviceProperties.limits.timestampPeriod;
     }
 
     // Physical device acceleration structure properties hold driver-defined limits

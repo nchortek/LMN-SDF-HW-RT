@@ -4,6 +4,7 @@
 #include <vk_mem_alloc.h>
 
 #include "gui.h"
+#include "gputimer.h"
 #include "pipeline.h"
 #include "gpu/shared.h"
 
@@ -40,6 +41,11 @@ public:
         return m_gui;
     }
 
+    const GpuTimer& getGpuTimer() const
+    {
+        return m_gpuTimer;
+    }
+
     void setCameraParams(const gpu::CameraParams& camera)
     {
         m_pushConstants.camera = camera;
@@ -54,6 +60,18 @@ public:
         else
         {
             m_pushConstants.flags &= ~gpu::kFlagDepthOfField;
+        }
+    }
+
+    void setDebugView(bool enabled)
+    {
+        if (enabled)
+        {
+            m_pushConstants.flags |= gpu::kFlagDebugView;
+        }
+        else
+        {
+            m_pushConstants.flags &= ~gpu::kFlagDebugView;
         }
     }
 
@@ -78,8 +96,10 @@ private:
 
     VulkanContext* m_context = nullptr;
     Swapchain* m_swapchain = nullptr;
+    GpuScene* m_gpuScene = nullptr;
     Pipeline m_pipeline;
     Gui m_gui;
+    GpuTimer m_gpuTimer;
 
     gpu::PushConstants m_pushConstants{};
 

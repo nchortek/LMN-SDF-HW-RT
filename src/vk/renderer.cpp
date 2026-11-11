@@ -14,6 +14,7 @@ bool Renderer::init(VulkanContext& context, Swapchain& swapchain, GLFWwindow* wi
 {
     m_context = &context;
     m_swapchain = &swapchain;
+    m_gpuScene = &gpuScene;
     m_renderExtent.width = width;
     m_renderExtent.height = height;
 
@@ -47,6 +48,12 @@ bool Renderer::init(VulkanContext& context, Swapchain& swapchain, GLFWwindow* wi
     }
 
     if (!createSyncObjects())
+    {
+        destroy();
+        return false;
+    }
+
+    if (!m_gpuTimer.init(context, kFramesInFlight))
     {
         destroy();
         return false;
@@ -111,6 +118,7 @@ void Renderer::destroy()
 
     m_frames = {};
     m_frameInFlight = 0;
+    m_gpuTimer.destroy();
     m_pipeline.destroy();
     m_gui.destroy();
     m_pushConstants = {};
@@ -128,6 +136,10 @@ bool Renderer::drawFrame()
     // by specifying the inFlightFence
     int fenceCount = 1;
     vkWaitForFences(device, fenceCount, &frameData.inFlightFence, VK_TRUE, kMaxTimeout);
+
+    // The inFlightFence guarantees this frame slot is no longer in-flight, so its timestamps
+    // can be read without additional stalls
+    m_gpuTimer.collect(m_frameInFlight);
 
     // Acquire an image from the swapchain, and signal imageAvailableSemaphore when this
     // command completes
@@ -586,6 +598,12 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         return false;
     }
 
+    m_gpuTimer.beginFrame(commandBuffer, m_frameInFlight);
+    m_gpuTimer.begin(commandBuffer, GpuScope::Frame);
+
+    // Rebuild the SDF BLAS and TLAS before this frame's trace reads them
+    m_gpuScene->recordSdfBuilds(commandBuffer, m_gpuTimer);
+
     // Ensure that raygen does not read or write to the accumulation image
     // until the previous frame has finished writing to it.
     recordImageBarrier(
@@ -637,6 +655,8 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         &m_pushConstants);
 
     // Trace those rays!
+    m_gpuTimer.begin(commandBuffer, GpuScope::Trace);
+
     vkCmdTraceRaysKHR(
         commandBuffer,
         &m_pipeline.getRaygenDeviceAddrRegion(),
@@ -646,6 +666,8 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         m_renderExtent.width,
         m_renderExtent.height,
         1);
+
+    m_gpuTimer.end(commandBuffer, GpuScope::Trace);
 
     // Ensure that raygen's display image writes finish before the blit reads them
     recordImageBarrier(
@@ -729,6 +751,8 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
         VK_PIPELINE_STAGE_2_NONE,
         VK_ACCESS_2_NONE);
+
+    m_gpuTimer.end(commandBuffer, GpuScope::Frame);
 
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
     {

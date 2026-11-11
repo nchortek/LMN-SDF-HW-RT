@@ -9,6 +9,7 @@
 #include "cube.h"
 #include "icosphere.h"
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -76,7 +77,22 @@ void Scene::loadFromJSON(const std::string& jsonName)
         MatNameToID[name] = materials.size();
         materials.emplace_back(newMaterial);
     }
-    const auto& objectsData = data["Objects"];
+
+    // Load SDF scene data
+    if (data.contains("SDF"))
+    {
+        const auto& sdfData = data["SDF"];
+
+        // Construct the .bricks filepath relative to the working directory
+        const std::filesystem::path bricksPath = std::filesystem::path(jsonName).parent_path()
+            / sdfData["BRICKS"].get<std::string>();
+        hasSdf = true;
+        sdfBricksPath = bricksPath.string();
+        sdfMaterialIdx = MatNameToID.at(sdfData["MATERIAL"]);
+    }
+
+    // Objects is optional, since a scene may contain only an SDF
+    const json objectsData = data.value("Objects", json::array());
     for (const auto& p : objectsData)
     {
         const auto& type = p["TYPE"];

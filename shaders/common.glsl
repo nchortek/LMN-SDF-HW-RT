@@ -4,6 +4,7 @@
 // This must always come first, since it includes extensions and structs
 // shared between Cpp and GLSL
 #include "gpu/shared.h"
+#include "gpu/sdf_shared.h"
 
 layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer VertexBuffer
 {
@@ -35,6 +36,16 @@ layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer Sce
     SceneAddresses deviceAddresses;
 };
 
+layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer SdfSceneAddressesBuffer
+{
+    SdfSceneAddresses sdfDeviceAddresses;
+};
+
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer AabbBuffer
+{
+    Aabb aabbs[];
+};
+
 // Constants/Sentinels
 const float kMiss = -1.0;
 const float kTMin = 0.001;
@@ -63,7 +74,11 @@ struct IntersectionInfo
 
     vec2 uv;
     uint materialIndex;
-    
+
+    // gl_PrimitiveID of the hit: the triangle index within its BLAS geometry,
+    // or the brick index for SDF bricks
+    uint primitiveId;
+
     // kMiss (-1.0) indicates a miss
     float t;
 };
@@ -152,6 +167,7 @@ IntersectionInfo getIntersectionInfo(
     isect.worldGeometricNor = worldGeometricNor;
     isect.uv = uv;
     isect.materialIndex = geomInfo.materialIndex;
+    isect.primitiveId = primitiveId;
     isect.t = t;
 
     return isect;

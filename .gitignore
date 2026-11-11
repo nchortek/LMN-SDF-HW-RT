@@ -559,3 +559,7 @@ xcuserdata
 *.xcuserstate
 
 imgui.ini
+
+# .bricks files (SDF brick dumps) are large, so only the commit the test sphere
+*.bricks
+!scenes/sphere.bricks

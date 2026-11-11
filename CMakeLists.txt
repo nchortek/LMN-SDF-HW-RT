@@ -100,12 +100,15 @@ set(headers
     src/sceneUtils.h
     src/utilities.h
     src/gpu/shared.h
+    src/gpu/sdf_shared.h
+    src/sdf/bricks.h
     src/vk/context.h
     src/vk/swapchain.h
     src/vk/renderer.h
     src/vk/pipeline.h
     src/vk/gui.h
     src/vk/gpuscene.h
+    src/vk/gputimer.h
     src/vk/utils/buffer.h
 )
 
@@ -116,6 +119,7 @@ set(sources
     src/sceneUtils.cpp
     src/stb.cpp
     src/utilities.cpp
+    src/sdf/bricks.cpp
     src/vk/context.cpp
     src/vk/swapchain.cpp
     src/vk/vma_impl.cpp
@@ -123,6 +127,7 @@ set(sources
     src/vk/pipeline.cpp
     src/vk/gui.cpp
     src/vk/gpuscene.cpp
+    src/vk/gputimer.cpp
     src/vk/utils/buffer.cpp
 )
 
@@ -188,6 +193,8 @@ set(shader_entry_points
     raygen.rgen
     miss.rmiss
     mesh.rchit
+    sdf_brick.rint
+    sdf.rchit
 )
 
 if(shader_entry_points)

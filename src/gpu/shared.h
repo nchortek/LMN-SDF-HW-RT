@@ -61,6 +61,7 @@ GPU_CONST uint kSpecGlass = 4;
 
 // Constants for flags
 GPU_CONST uint kFlagDepthOfField = 0x1u;
+GPU_CONST uint kFlagDebugView = 0x2u;
 
 // Misc.
 GPU_CONST uint kInstanceMaskAllBitsSet = 0xFFu;
@@ -135,6 +136,10 @@ struct SceneAddresses
     
     // Starting address of our buffer of EmissiveTri structs
     uint64_t lightsAddr;
+
+    // Starting address of our single SdfSceneAddresses struct
+    uint64_t sdfAddr;
+
     uint lightCount;
     float totalLightArea;
 };

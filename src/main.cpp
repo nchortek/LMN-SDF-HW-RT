@@ -15,6 +15,8 @@
 #include "vk/swapchain.h"
 #include "vk/gpuscene.h"
 
+#include "sdf/bricks.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -36,6 +38,7 @@ static double lastY;
 static bool camchanged = true;
 static bool showGui = true;
 static bool enableDOF = false;
+static bool enableDebugView = false;
 
 float zoom, theta, phi;
 glm::vec3 cameraPosition;
@@ -119,7 +122,8 @@ void errorCallback(int error, const char* description)
     fprintf(stderr, "%s\n", description);
 }
 
-bool init()
+// Note: bricks is null when the scene has no SDF
+bool init(const bricksutil::BricksFile* bricks)
 {
     if (!initGLFW())
     {
@@ -148,7 +152,7 @@ bool init()
     gpuScene = std::make_unique<GpuScene>();
     {
         const sceneutil::FlatScene flatScene = sceneutil::flattenScene(*scene);
-        if (!gpuScene->init(*context, flatScene))
+        if (!gpuScene->init(*context, flatScene, bricks, scene->sdfMaterialIdx))
         {
             fprintf(stderr, "Failed to initialize GpuScene\n");
             return false;
@@ -165,7 +169,11 @@ bool init()
     }
 
     renderer->setMaxTraceDepth(renderState->traceDepth);
-    
+
+    // SDF scenes start in the debug view
+    enableDebugView = scene->hasSdf;
+    renderer->setDebugView(enableDebugView);
+
     return true;
 }
 
@@ -191,6 +199,22 @@ void RenderImGui()
         {
             renderer->setDepthOfField(enableDOF);
             renderer->resetRenderedFrameCount();
+        }
+
+        if (ImGui::Checkbox("Debug view", &enableDebugView))
+        {
+            renderer->setDebugView(enableDebugView);
+            renderer->resetRenderedFrameCount();
+        }
+
+        // Each scope's GPU time, averaged over the last N frames
+        ImGui::SeparatorText("GPU timings");
+        const GpuTimer& gpuTimer = renderer->getGpuTimer();
+
+        for (uint32_t i = 0; i < GpuTimer::kScopeCount; i++)
+        {
+            const GpuScope scope = static_cast<GpuScope>(i);
+            ImGui::Text("%s: %.3f ms", GpuTimer::getScopeName(scope), gpuTimer.getAverageMs(scope));
         }
 
         ImGui::End();
@@ -267,6 +291,25 @@ int main(int argc, char** argv)
     // Load scene file
     scene = new Scene(sceneFile);
 
+    // Once brick data is permanently stored on the GPU we can remove this
+    bricksutil::BricksFile bricks;
+    if (scene->hasSdf)
+    {
+        if (!bricksutil::readBricks(scene->sdfBricksPath.c_str(), bricks))
+        {
+            return 1;
+        }
+
+        printf("Loaded %s: brickCount %u, domainMin (%g, %g, %g), voxelSize %g, band %g\n",
+            scene->sdfBricksPath.c_str(),
+            bricks.brickCount,
+            bricks.domainMin[0],
+            bricks.domainMin[1],
+            bricks.domainMin[2],
+            bricks.voxelSize,
+            bricks.band);
+    }
+
     //Create Instance for ImGUIData
     guiData = new GuiDataContainer();
 
@@ -291,7 +334,7 @@ int main(int argc, char** argv)
     zoom = glm::length(cam.position - ogLookAt);
 
     // Initialize our rendering infrastructure
-    if (!init())
+    if (!init(scene->hasSdf ? &bricks : nullptr))
     {
         // Initialization failed
         return 1;
