@@ -38,6 +38,7 @@ static double lastY;
 static bool camchanged = true;
 static bool showGui = true;
 static bool enableDOF = false;
+static bool enableDebugView = false;
 
 float zoom, theta, phi;
 glm::vec3 cameraPosition;
@@ -192,6 +193,12 @@ void RenderImGui()
         if (ImGui::Checkbox("Enable Depth Of Field", &enableDOF))
         {
             renderer->setDepthOfField(enableDOF);
+            renderer->resetRenderedFrameCount();
+        }
+
+        if (ImGui::Checkbox("Debug view", &enableDebugView))
+        {
+            renderer->setDebugView(enableDebugView);
             renderer->resetRenderedFrameCount();
         }
 

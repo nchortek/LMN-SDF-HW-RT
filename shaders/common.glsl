@@ -74,7 +74,11 @@ struct IntersectionInfo
 
     vec2 uv;
     uint materialIndex;
-    
+
+    // gl_PrimitiveID of the hit: the triangle index within its BLAS geometry,
+    // or the brick index for SDF bricks
+    uint primitiveId;
+
     // kMiss (-1.0) indicates a miss
     float t;
 };
@@ -163,6 +167,7 @@ IntersectionInfo getIntersectionInfo(
     isect.worldGeometricNor = worldGeometricNor;
     isect.uv = uv;
     isect.materialIndex = geomInfo.materialIndex;
+    isect.primitiveId = primitiveId;
     isect.t = t;
 
     return isect;

@@ -57,6 +57,18 @@ public:
         }
     }
 
+    void setDebugView(bool enabled)
+    {
+        if (enabled)
+        {
+            m_pushConstants.flags |= gpu::kFlagDebugView;
+        }
+        else
+        {
+            m_pushConstants.flags &= ~gpu::kFlagDebugView;
+        }
+    }
+
     void setMaxTraceDepth(uint32_t maxDepth)
     {
         m_pushConstants.maxDepth = maxDepth;

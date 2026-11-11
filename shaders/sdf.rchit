@@ -26,5 +26,6 @@ void main()
     payload.worldGeometricNor = worldNor;
     payload.uv = vec2(0.0);
     payload.materialIndex = gl_InstanceCustomIndexEXT;
+    payload.primitiveId = gl_PrimitiveID;
     payload.t = gl_HitTEXT;
 }
