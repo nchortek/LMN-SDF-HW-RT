@@ -207,6 +207,16 @@ void RenderImGui()
             renderer->resetRenderedFrameCount();
         }
 
+        // Each scope's GPU time, averaged over the last N frames
+        ImGui::SeparatorText("GPU timings");
+        const GpuTimer& gpuTimer = renderer->getGpuTimer();
+
+        for (uint32_t i = 0; i < GpuTimer::kScopeCount; i++)
+        {
+            const GpuScope scope = static_cast<GpuScope>(i);
+            ImGui::Text("%s: %.3f ms", GpuTimer::getScopeName(scope), gpuTimer.getAverageMs(scope));
+        }
+
         ImGui::End();
     }
     gui.renderFrame();

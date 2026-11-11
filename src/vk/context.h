@@ -85,6 +85,12 @@ public:
         return m_rtProperties;
     }
 
+    // Nanoseconds per GPU timestamp tick
+    float getTimestampPeriod() const
+    {
+        return m_deviceProperties.limits.timestampPeriod;
+    }
+
     // Physical device acceleration structure properties hold driver-defined limits
     // for building and updating BLAS and TLAS
     const VkPhysicalDeviceAccelerationStructurePropertiesKHR& getAccelProperties() const

@@ -297,6 +297,7 @@ void VulkanContext::printDeviceReport() const
     printf("shaderGroupBaseAlignment: %u\n", m_rtProperties.shaderGroupBaseAlignment);
     printf("shaderGroupHandleAlignment: %u\n", m_rtProperties.shaderGroupHandleAlignment);
     printf("maxRayRecursionDepth: %u\n", m_rtProperties.maxRayRecursionDepth);
+    printf("timestampPeriod: %g ns\n", m_deviceProperties.limits.timestampPeriod);
     printf("SER (NV reorder): %s\n",
         m_serSupported
         ? (m_serReorderMode == VK_RAY_TRACING_INVOCATION_REORDER_MODE_REORDER_NV

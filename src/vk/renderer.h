@@ -4,6 +4,7 @@
 #include <vk_mem_alloc.h>
 
 #include "gui.h"
+#include "gputimer.h"
 #include "pipeline.h"
 #include "gpu/shared.h"
 
@@ -38,6 +39,11 @@ public:
     Gui& getGui()
     {
         return m_gui;
+    }
+
+    const GpuTimer& getGpuTimer() const
+    {
+        return m_gpuTimer;
     }
 
     void setCameraParams(const gpu::CameraParams& camera)
@@ -93,6 +99,7 @@ private:
     GpuScene* m_gpuScene = nullptr;
     Pipeline m_pipeline;
     Gui m_gui;
+    GpuTimer m_gpuTimer;
 
     gpu::PushConstants m_pushConstants{};
 

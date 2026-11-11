@@ -10,6 +10,7 @@
 #include <vector>
 
 class VulkanContext;
+class GpuTimer;
 
 class GpuScene
 {
@@ -47,7 +48,8 @@ public:
     // Records this frame's SDF BLAS and TLAS builds, with the barriers that order them
     // against the previous frame's trace and this frame's trace. This must be called
     // before tracing if the scene contains SDFs.
-    void recordSdfBuilds(VkCommandBuffer commandBuffer);
+    // gpuTimer records the GpuScope::SdfBlas and GpuScope::Tlas scopes.
+    void recordSdfBuilds(VkCommandBuffer commandBuffer, GpuTimer& gpuTimer);
 
 private:
     VulkanContext* m_context = nullptr;

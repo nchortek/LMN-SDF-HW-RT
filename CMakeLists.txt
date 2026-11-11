@@ -108,6 +108,7 @@ set(headers
     src/vk/pipeline.h
     src/vk/gui.h
     src/vk/gpuscene.h
+    src/vk/gputimer.h
     src/vk/utils/buffer.h
 )
 
@@ -126,6 +127,7 @@ set(sources
     src/vk/pipeline.cpp
     src/vk/gui.cpp
     src/vk/gpuscene.cpp
+    src/vk/gputimer.cpp
     src/vk/utils/buffer.cpp
 )
 

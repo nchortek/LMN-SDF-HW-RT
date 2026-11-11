@@ -1,6 +1,7 @@
 #include "gpuscene.h"
 
 #include "context.h"
+#include "gputimer.h"
 #include "pipeline.h"
 #include "gpu/sdf_shared.h"
 
@@ -492,7 +493,7 @@ bool GpuScene::createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMat
     return true;
 }
 
-void GpuScene::recordSdfBuilds(VkCommandBuffer commandBuffer)
+void GpuScene::recordSdfBuilds(VkCommandBuffer commandBuffer, GpuTimer& gpuTimer)
 {
     // Builds read and write both the structure and the scratch buffer through these accesses
     const VkPipelineStageFlags2 buildStage = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
@@ -508,6 +509,9 @@ void GpuScene::recordSdfBuilds(VkCommandBuffer commandBuffer)
         accelRead | accelWrite,
         buildStage,
         accelRead | accelWrite);
+
+    // The SDF BLAS scope is recorded even without an SDF, where it measures roughly zero
+    gpuTimer.begin(commandBuffer, GpuScope::SdfBlas);
 
     if (m_sdfBLAS.handle != VK_NULL_HANDLE)
     {
@@ -534,10 +538,14 @@ void GpuScene::recordSdfBuilds(VkCommandBuffer commandBuffer)
             accelRead | accelWrite);
     }
 
+    gpuTimer.end(commandBuffer, GpuScope::SdfBlas);
+
     // The mesh BLASes were built at load through endSingleTimeCommands, which waits idle,
     // so they're complete before any frame's TLAS build reads them
     VkAccelerationStructureBuildRangeInfoKHR tlasBuildRange{};
     tlasBuildRange.primitiveCount = m_tlasInstanceCount;
+
+    gpuTimer.begin(commandBuffer, GpuScope::Tlas);
 
     recordAccelStructureBuild(
         commandBuffer,
@@ -548,6 +556,8 @@ void GpuScene::recordSdfBuilds(VkCommandBuffer commandBuffer)
         kTlasBuildFlags,
         m_TLAS,
         m_scratchBuffer.deviceAddress);
+
+    gpuTimer.end(commandBuffer, GpuScope::Tlas);
 
     // Rays must not traverse the TLAS until its build is complete
     recordMemoryBarrier(
