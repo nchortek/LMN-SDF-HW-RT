@@ -91,7 +91,8 @@ void Scene::loadFromJSON(const std::string& jsonName)
         sdfMaterialIdx = MatNameToID.at(sdfData["MATERIAL"]);
     }
 
-    const auto& objectsData = data["Objects"];
+    // Objects is optional, since a scene may contain only an SDF
+    const json objectsData = data.value("Objects", json::array());
     for (const auto& p : objectsData)
     {
         const auto& type = p["TYPE"];

@@ -122,7 +122,8 @@ void errorCallback(int error, const char* description)
     fprintf(stderr, "%s\n", description);
 }
 
-bool init()
+// bricks is null when the scene has no SDF
+bool init(const bricksutil::BricksFile* bricks)
 {
     if (!initGLFW())
     {
@@ -151,7 +152,7 @@ bool init()
     gpuScene = std::make_unique<GpuScene>();
     {
         const sceneutil::FlatScene flatScene = sceneutil::flattenScene(*scene);
-        if (!gpuScene->init(*context, flatScene))
+        if (!gpuScene->init(*context, flatScene, bricks, scene->sdfMaterialIdx))
         {
             fprintf(stderr, "Failed to initialize GpuScene\n");
             return false;
@@ -168,7 +169,11 @@ bool init()
     }
 
     renderer->setMaxTraceDepth(renderState->traceDepth);
-    
+
+    // SDF scenes start in the debug view
+    enableDebugView = scene->hasSdf;
+    renderer->setDebugView(enableDebugView);
+
     return true;
 }
 
@@ -276,9 +281,10 @@ int main(int argc, char** argv)
     // Load scene file
     scene = new Scene(sceneFile);
 
+    // Once brick data is permanently stored on the GPU we can remove this
+    bricksutil::BricksFile bricks;
     if (scene->hasSdf)
     {
-        bricksutil::BricksFile bricks;
         if (!bricksutil::readBricks(scene->sdfBricksPath.c_str(), bricks))
         {
             return 1;
@@ -318,7 +324,7 @@ int main(int argc, char** argv)
     zoom = glm::length(cam.position - ogLookAt);
 
     // Initialize our rendering infrastructure
-    if (!init())
+    if (!init(scene->hasSdf ? &bricks : nullptr))
     {
         // Initialization failed
         return 1;

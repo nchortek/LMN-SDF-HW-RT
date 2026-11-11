@@ -4,6 +4,7 @@
 
 #include "vk/utils/buffer.h"
 #include "sceneUtils.h"
+#include "sdf/bricks.h"
 
 #include <cstdint>
 #include <vector>
@@ -26,7 +27,11 @@ public:
     GpuScene(GpuScene&&) = delete;
     GpuScene& operator=(GpuScene&&) = delete;
 
-    bool init(VulkanContext& context, const sceneutil::FlatScene& flatScene);
+    bool init(
+        VulkanContext& context,
+        const sceneutil::FlatScene& flatScene,
+        const bricksutil::BricksFile* bricks,
+        uint32_t sdfMaterialIdx);
     void destroy();
 
     uint64_t getSceneAddresses() const
@@ -49,6 +54,10 @@ private:
     vkutil::Buffer m_lightBuffer{};
     vkutil::Buffer m_sceneAddressesBuffer{};
 
+    // SDF buffers, only created when the scene has an SDF
+    vkutil::Buffer m_aabbBuffer{};
+    vkutil::Buffer m_sdfSceneAddressesBuffer{};
+
     struct AccelStructure
     {
         VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
@@ -60,12 +69,28 @@ private:
         VkDeviceAddress deviceAddress = 0;
     };
 
-    // One TLAS for the scene, one BLAS per mesh
+    // One TLAS for the scene, one BLAS per mesh, plus one AABB BLAS for the SDF bricks
     std::vector<AccelStructure> m_BLASes;
+    AccelStructure m_sdfBLAS{};
     AccelStructure m_TLAS{};
 
+    // Note: Each acceleration structure's size query and build must use the same flags,
+    // so each kind of structure gets one constant.
+    // 
+    // Triangle mesh BLASes are built once at load, so they favor trace speed
+    static constexpr VkBuildAccelerationStructureFlagsKHR kMeshBlasBuildFlags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+
+    // The SDF BLAS favors build speed, since it will be rebuilt every frame
+    static constexpr VkBuildAccelerationStructureFlagsKHR kSdfBlasBuildFlags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+
+    static constexpr VkBuildAccelerationStructureFlagsKHR kTlasBuildFlags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+
     bool createBLASes(const sceneutil::FlatScene& flatScene);
-    bool createTLAS(const sceneutil::FlatScene& flatScene);
+    bool createSdfBLAS(uint32_t brickCount);
+    bool createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMaterialIdx);
 
     bool createAccelStructure(
         VkAccelerationStructureTypeKHR type,
@@ -87,5 +112,6 @@ private:
     void destroyAccelStructure(AccelStructure& accelStructure);
 
     bool createSceneDataBuffers(const sceneutil::FlatScene& flatScene);
+    bool createSdfBuffers(const bricksutil::BricksFile& bricks);
     bool createSceneAddressesBuffer(uint32_t lightCount, float totalLightArea);
 };

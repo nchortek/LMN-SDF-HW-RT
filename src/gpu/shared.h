@@ -66,9 +66,6 @@ GPU_CONST uint kFlagDebugView = 0x2u;
 // Misc.
 GPU_CONST uint kInstanceMaskAllBitsSet = 0xFFu;
 
-// Sentinel buffer device address, used to mark a nonexistent buffer (no valid buffer has address 0)
-GPU_CONST uint64_t kNullAddress = 0;
-
 struct Vertex
 {
     vec3 position;
