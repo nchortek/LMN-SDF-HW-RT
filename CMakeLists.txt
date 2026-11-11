@@ -191,6 +191,8 @@ set(shader_entry_points
     raygen.rgen
     miss.rmiss
     mesh.rchit
+    sdf_brick.rint
+    sdf.rchit
 )
 
 if(shader_entry_points)

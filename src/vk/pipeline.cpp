@@ -149,19 +149,25 @@ bool Pipeline::createPipeline()
 {
     const uint32_t raygenStageIdx = 0;
     const uint32_t missStageIdx = 1;
-    const uint32_t closestHitStageIdx = 2;
-    const uint32_t shaderStageCount = 3;
+    const uint32_t meshClosestHitStageIdx = 2;
+    const uint32_t sdfIntersectionStageIdx = 3;
+    const uint32_t sdfClosestHitStageIdx = 4;
+    const uint32_t shaderStageCount = 5;
 
     const std::array<VkShaderStageFlagBits, shaderStageCount> shaderStageFlags = {
         VK_SHADER_STAGE_RAYGEN_BIT_KHR,
         VK_SHADER_STAGE_MISS_BIT_KHR,
+        VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+        VK_SHADER_STAGE_INTERSECTION_BIT_KHR,
         VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR
     };
 
     const std::array<const char*, shaderStageCount> shaderStageFilenames = {
         "raygen.rgen.spv",
         "miss.rmiss.spv",
-        "mesh.rchit.spv"
+        "mesh.rchit.spv",
+        "sdf_brick.rint.spv",
+        "sdf.rchit.spv"
     };
 
     std::array<VkShaderModule, shaderStageCount> shaderModules{};
@@ -211,10 +217,16 @@ bool Pipeline::createPipeline()
         groupCreateInfos.at(kMissGroupIdx).type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
         groupCreateInfos.at(kMissGroupIdx).generalShader = missStageIdx;
 
-        // The closest-hit shader falls under the "triangles hit" group type since we're using
-        // triangle geometry
-        groupCreateInfos.at(kClosestHitGroupIdx).type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-        groupCreateInfos.at(kClosestHitGroupIdx).closestHitShader = closestHitStageIdx;
+        // The mesh closest-hit shader falls under the "triangles hit" group type since the
+        // hardware intersects the triangle geometry itself
+        groupCreateInfos.at(kTriangleHitGroupIdx).type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+        groupCreateInfos.at(kTriangleHitGroupIdx).closestHitShader = meshClosestHitStageIdx;
+
+        // SDF bricks are AABB geometry, so their group is "procedural hit": the intersection
+        // shader decides whether and where a ray hits inside each brick's box
+        groupCreateInfos.at(kSdfHitGroupIdx).type = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
+        groupCreateInfos.at(kSdfHitGroupIdx).intersectionShader = sdfIntersectionStageIdx;
+        groupCreateInfos.at(kSdfHitGroupIdx).closestHitShader = sdfClosestHitStageIdx;
 
         VkRayTracingPipelineCreateInfoKHR pipelineCreateInfo{};
         pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
@@ -278,12 +290,14 @@ bool Pipeline::createShaderBindingTable()
 
     // For each region we compute its offset (in bytes) within the SBT buffer we are going to create
     // NCHORTEK TODO: offset computation may need to be updated if additional shader records
-    // are added to our shader groups (adding a single recordStride assumes each region only
-    // contains a single record).
+    // are added to the raygen or miss regions (adding a single recordStride assumes each of
+    // those regions only contains a single record). The hit region is last, so it can hold
+    // kHitSlotCount records without affecting the other offsets.
     const VkDeviceSize raygenOffset = 0;
     const VkDeviceSize missOffset = alignUp(raygenOffset + recordStride, baseAlignment);
     const VkDeviceSize hitOffset = alignUp(missOffset + recordStride, baseAlignment);
-    const VkDeviceSize bufferSize = hitOffset + recordStride;
+    const VkDeviceSize hitRegionSize = kHitSlotCount * recordStride;
+    const VkDeviceSize bufferSize = hitOffset + hitRegionSize;
 
     VkBufferCreateInfo bufferCreateInfo{};
     bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -324,7 +338,15 @@ bool Pipeline::createShaderBindingTable()
     uint8_t* sbtData = static_cast<uint8_t*>(allocInfo.pMappedData);
     memcpy(sbtData + raygenOffset, handles.data() + kRaygenGroupIdx * handleSize, handleSize);
     memcpy(sbtData + missOffset, handles.data() + kMissGroupIdx * handleSize, handleSize);
-    memcpy(sbtData + hitOffset, handles.data() + kClosestHitGroupIdx * handleSize, handleSize);
+
+    // The hit region holds one record per hit group, in hit slot order
+    for (uint32_t slot = 0; slot < kHitSlotCount; slot++)
+    {
+        memcpy(
+            sbtData + hitOffset + slot * recordStride,
+            handles.data() + (kFirstHitGroupIdx + slot) * handleSize,
+            handleSize);
+    }
 
     // Make the writes visible to the device in case the memory isn't host-coherent
     // (host-coherent memory is already GPU-visible, so it'd be a no-op in that case)
@@ -344,7 +366,7 @@ bool Pipeline::createShaderBindingTable()
     // a single raygen shader.
     m_raygenDeviceAddrRegion = { sbtAddress + raygenOffset, recordStride, recordStride };
     m_missDeviceAddrRegion = { sbtAddress + missOffset, recordStride, recordStride };
-    m_hitDeviceAddrRegion = { sbtAddress + hitOffset, recordStride, recordStride };
+    m_hitDeviceAddrRegion = { sbtAddress + hitOffset, recordStride, hitRegionSize };
 
     // We dont have any callable shaders, so zero-out its device address region to
     // indicate it is unused

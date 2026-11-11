@@ -15,7 +15,15 @@ public:
     // Every shader stage that will read push constants
     static constexpr VkShaderStageFlags kPushConstantStages =
         VK_SHADER_STAGE_RAYGEN_BIT_KHR
-        | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+        | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR
+        | VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+
+    // Hit slot constants
+    // An instance's instanceShaderBindingTableRecordOffset selects
+    // the hit group in that slot of the SBT's hit region
+    static constexpr uint32_t kTriangleHitSlot = 0;
+    static constexpr uint32_t kSdfHitSlot = 1;
+    static constexpr uint32_t kHitSlotCount = 2;
 
     Pipeline() = default;
     ~Pipeline()
@@ -76,8 +84,14 @@ private:
     // each group's handle into the matching region.
     static constexpr uint32_t kRaygenGroupIdx = 0;
     static constexpr uint32_t kMissGroupIdx = 1;
-    static constexpr uint32_t kClosestHitGroupIdx = 2;
-    static constexpr uint32_t kShaderGroupCount = 3;
+
+    // Hit groups are contiguous and in hit slot order, so the SBT can copy them
+    // into the hit region in one loop
+    static constexpr uint32_t kFirstHitGroupIdx = 2;
+    static constexpr uint32_t kTriangleHitGroupIdx = kFirstHitGroupIdx + kTriangleHitSlot;
+    static constexpr uint32_t kSdfHitGroupIdx = kFirstHitGroupIdx + kSdfHitSlot;
+
+    static constexpr uint32_t kShaderGroupCount = kFirstHitGroupIdx + kHitSlotCount;
 
     VulkanContext* m_context = nullptr;
 

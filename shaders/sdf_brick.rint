@@ -1,0 +1,59 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "gpu/shared.h"
+#include "common.glsl"
+
+// This shader handles intersections with SDF bricks.
+// For now we just report where the ray enters the brick's AABB.
+
+layout(push_constant, scalar) uniform PushConstantBlock
+{
+    PushConstants pc;
+};
+
+void main()
+{
+    SceneAddresses sceneAddresses = SceneAddressesBuffer(pc.sceneAddr).deviceAddresses;
+    SdfSceneAddresses sdfAddresses = SdfSceneAddressesBuffer(sceneAddresses.sdfAddr).sdfDeviceAddresses;
+
+    // gl_PrimitiveID is the brick index
+    Aabb box = AabbBuffer(sdfAddresses.aabbsAddr).aabbs[gl_PrimitiveID];
+
+    // Slab test in object space
+    vec3 invDir = 1.0 / gl_ObjectRayDirectionEXT;
+    vec3 t0 = (box.minValues - gl_ObjectRayOriginEXT) * invDir;
+    vec3 t1 = (box.maxValues - gl_ObjectRayOriginEXT) * invDir;
+    vec3 tNear = min(t0, t1);
+    vec3 tFar = max(t0, t1);
+
+    // This is the furthest t-values for which the ray enters any slab,
+    // which is the same as saying "this t-value is where we enter the AABB"
+    float tEnter = max(max(tNear.x, tNear.y), tNear.z);
+
+    // This is the closest t-value for which the ray leaves any slab,
+    // which is the same as saying "this t-value is where we exit the AABB"
+    float tExit = min(min(tFar.x, tFar.y), tFar.z);
+
+    // Only record entry hits (a ray starting inside the box doesn't report a hit)
+    if (tEnter > tExit
+        || tEnter < gl_RayTminEXT
+        || tEnter > gl_RayTmaxEXT)
+    {
+        return;
+    }
+
+    // The ray enters through the slab whose near plane it crosses last
+    // (axis == 0 for x, 1 for y, and 2 for z)
+    uint axis = (tNear.x > tNear.y)
+        ? ((tNear.x > tNear.z) ? 0u : 2u)
+        : ((tNear.y > tNear.z) ? 1u : 2u);
+
+    // A ray moving along the positive axis direction enters through the min face.
+    // This allows us to set the hit kind to the entered face:
+    // 0: +x, 1: -x, 2: +y, 3: -y, 4: +z, 5: -z.
+    uint face = (2u * axis) + ((gl_ObjectRayDirectionEXT[axis] > 0.0) ? 1u : 0u);
+
+    reportIntersectionEXT(tEnter, face);
+}

@@ -1,6 +1,7 @@
 #include "gpuscene.h"
 
 #include "context.h"
+#include "pipeline.h"
 #include "gpu/sdf_shared.h"
 
 #include <glm/gtc/type_ptr.hpp>
@@ -289,8 +290,7 @@ bool GpuScene::createTLAS(const sceneutil::FlatScene& flatScene)
 
         instance.mask = gpu::kInstanceMaskAllBitsSet;
 
-        // We only have one hit group for all geometry, so no offset necessary here
-        instance.instanceShaderBindingTableRecordOffset = 0;
+        instance.instanceShaderBindingTableRecordOffset = Pipeline::kTriangleHitSlot;
 
         // Backfaces must hit (both sides of a surface should be treated as valid intersections)
         instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
