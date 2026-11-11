@@ -44,6 +44,11 @@ public:
         return m_TLAS.handle;
     }
 
+    // Records this frame's SDF BLAS and TLAS builds, with the barriers that order them
+    // against the previous frame's trace and this frame's trace. This must be called
+    // before tracing if the scene contains SDFs.
+    void recordSdfBuilds(VkCommandBuffer commandBuffer);
+
 private:
     VulkanContext* m_context = nullptr;
 
@@ -74,6 +79,17 @@ private:
     AccelStructure m_sdfBLAS{};
     AccelStructure m_TLAS{};
 
+    // Inputs to the per-frame SDF BLAS and TLAS builds. The geometry descriptions are
+    // filled once at load and shared by each structure's size query and every build.
+    uint32_t m_sdfBrickCount = 0;
+    VkAccelerationStructureGeometryKHR m_sdfBlasGeometry{};
+    vkutil::Buffer m_tlasInstanceBuffer{};
+    uint32_t m_tlasInstanceCount = 0;
+    VkAccelerationStructureGeometryKHR m_tlasGeometry{};
+
+    // Shared by the per-frame SDF BLAS and TLAS builds, which run one after the other
+    vkutil::Buffer m_scratchBuffer{};
+
     // Note: Each acceleration structure's size query and build must use the same flags,
     // so each kind of structure gets one constant.
     // 
@@ -89,25 +105,41 @@ private:
         VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 
     bool createBLASes(const sceneutil::FlatScene& flatScene);
-    bool createSdfBLAS(uint32_t brickCount);
-    bool createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMaterialIdx);
 
+    // These create the SDF BLAS and TLAS without building them (recordSdfBuilds builds them
+    // every frame), and return the scratch size a build needs
+    bool createSdfBLAS(uint32_t brickCount, VkDeviceSize& scratchSize);
+    bool createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMaterialIdx, VkDeviceSize& scratchSize);
+
+    // Note: geometries and maxPrimitiveCounts each point to geometryCount elements
     bool createAccelStructure(
         VkAccelerationStructureTypeKHR type,
-        const std::vector<VkAccelerationStructureGeometryKHR>& geometries,
-        const std::vector<uint32_t>& maxPrimitiveCounts,
+        uint32_t geometryCount,
+        const VkAccelerationStructureGeometryKHR* geometries,
+        const uint32_t* maxPrimitiveCounts,
         VkBuildAccelerationStructureFlagsKHR flags,
         AccelStructure& accelStructure,
         VkDeviceSize& scratchSize);
 
+    // Note: geometries and buildRanges each point to geometryCount elements
     void recordAccelStructureBuild(
         VkCommandBuffer commandBuffer,
         VkAccelerationStructureTypeKHR type,
-        const std::vector<VkAccelerationStructureGeometryKHR>& geometries,
-        const std::vector<VkAccelerationStructureBuildRangeInfoKHR>& buildRanges,
+        uint32_t geometryCount,
+        const VkAccelerationStructureGeometryKHR* geometries,
+        const VkAccelerationStructureBuildRangeInfoKHR* buildRanges,
         VkBuildAccelerationStructureFlagsKHR flags,
         const AccelStructure& accelStructure,
         VkDeviceAddress scratchAddress);
+
+    // Records a global memory barrier. Everything before it in submission order (including
+    // earlier frames' command buffers on this queue) is ordered against everything after it
+    static void recordMemoryBarrier(
+        VkCommandBuffer commandBuffer,
+        VkPipelineStageFlags2 srcStage,
+        VkAccessFlags2 srcAccess,
+        VkPipelineStageFlags2 dstStage,
+        VkAccessFlags2 dstAccess);
 
     void destroyAccelStructure(AccelStructure& accelStructure);
 

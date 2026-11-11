@@ -6,6 +6,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <limits>
 
 // Note: sdfMaterialIdx is the SDF's index into flatScene.materials, and is only used when 
@@ -43,14 +44,31 @@ bool GpuScene::init(
         return false;
     }
 
-    if (bricks != nullptr && !createSdfBLAS(bricks->brickCount))
+    VkDeviceSize sdfBlasScratchSize = 0;
+    if (bricks != nullptr && !createSdfBLAS(bricks->brickCount, sdfBlasScratchSize))
     {
         destroy();
         return false;
     }
 
-    if (!createTLAS(flatScene, sdfMaterialIdx))
+    VkDeviceSize tlasScratchSize = 0;
+    if (!createTLAS(flatScene, sdfMaterialIdx, tlasScratchSize))
     {
+        destroy();
+        return false;
+    }
+
+    // The per-frame SDF BLAS and TLAS builds run one after the other, so one scratch buffer
+    // sized for the larger of the two serves both. It's created with the required
+    // driver-defined alignment.
+    if (!vkutil::createBuffer(
+        *m_context,
+        std::max(sdfBlasScratchSize, tlasScratchSize),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        m_context->getAccelProperties().minAccelerationStructureScratchOffsetAlignment,
+        m_scratchBuffer))
+    {
+        fprintf(stderr, "Failed to create the per-frame acceleration structure scratch buffer.\n");
         destroy();
         return false;
     }
@@ -75,6 +93,9 @@ void GpuScene::destroy()
     m_BLASes.clear();
 
     destroyAccelStructure(m_sdfBLAS);
+
+    vkutil::destroyBuffer(*m_context, m_tlasInstanceBuffer);
+    vkutil::destroyBuffer(*m_context, m_scratchBuffer);
 
     vkutil::destroyBuffer(*m_context, m_vertexBuffer);
     vkutil::destroyBuffer(*m_context, m_indexBuffer);
@@ -285,11 +306,13 @@ bool GpuScene::createBLASes(const sceneutil::FlatScene& flatScene)
         }
 
         AccelStructure& blas = m_BLASes.at(meshIndex);
+        const uint32_t geometryCount = static_cast<uint32_t>(geometries.size());
         VkDeviceSize scratchSize = 0;
         if (!createAccelStructure(
             VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-            geometries,
-            maxPrimitiveCounts,
+            geometryCount,
+            geometries.data(),
+            maxPrimitiveCounts.data(),
             kMeshBlasBuildFlags,
             blas,
             scratchSize))
@@ -316,8 +339,9 @@ bool GpuScene::createBLASes(const sceneutil::FlatScene& flatScene)
         recordAccelStructureBuild(
             commandBuffer,
             VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-            geometries,
-            buildRanges,
+            geometryCount,
+            geometries.data(),
+            buildRanges.data(),
             kMeshBlasBuildFlags,
             blas,
             scratchBuffer.deviceAddress);
@@ -331,8 +355,10 @@ bool GpuScene::createBLASes(const sceneutil::FlatScene& flatScene)
     return true;
 }
 
-bool GpuScene::createSdfBLAS(uint32_t brickCount)
+bool GpuScene::createSdfBLAS(uint32_t brickCount, VkDeviceSize& scratchSize)
 {
+    m_sdfBrickCount = brickCount;
+
     // One AABB geometry over the whole AABB buffer. Each box is a primitive, so
     // gl_PrimitiveID in the intersection and hit shaders is the brick index.
     VkAccelerationStructureGeometryAabbsDataKHR aabbsData{};
@@ -340,25 +366,17 @@ bool GpuScene::createSdfBLAS(uint32_t brickCount)
     aabbsData.data.deviceAddress = m_aabbBuffer.deviceAddress;
     aabbsData.stride = sizeof(gpu::Aabb);
 
-    VkAccelerationStructureGeometryKHR geometry{};
-    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geometry.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR;
-    geometry.geometry.aabbs = aabbsData;
-    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-
-    // For VK_GEOMETRY_TYPE_AABBS_KHR, a primitive is one AABB (one brick)
-    VkAccelerationStructureBuildRangeInfoKHR buildRange{};
-    buildRange.primitiveCount = brickCount;
-
-    const std::vector<VkAccelerationStructureGeometryKHR> geometries = { geometry };
-    const std::vector<VkAccelerationStructureBuildRangeInfoKHR> buildRanges = { buildRange };
+    m_sdfBlasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    m_sdfBlasGeometry.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR;
+    m_sdfBlasGeometry.geometry.aabbs = aabbsData;
+    m_sdfBlasGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
 
     // Sized via MAX_BRICKS, so later builds can use any brick count up to that maximum
-    VkDeviceSize scratchSize = 0;
     if (!createAccelStructure(
         VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-        geometries,
-        { gpu::MAX_BRICKS },
+        1,
+        &m_sdfBlasGeometry,
+        &gpu::MAX_BRICKS,
         kSdfBlasBuildFlags,
         m_sdfBLAS,
         scratchSize))
@@ -367,39 +385,10 @@ bool GpuScene::createSdfBLAS(uint32_t brickCount)
         return false;
     }
 
-    // Create a temporary scratch buffer with the required driver-defined alignment
-    vkutil::Buffer scratchBuffer{};
-    if (!vkutil::createBuffer(
-        *m_context,
-        scratchSize,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        m_context->getAccelProperties().minAccelerationStructureScratchOffsetAlignment,
-        scratchBuffer))
-    {
-        fprintf(stderr, "Failed to create the SDF BLAS scratch buffer.\n");
-        return false;
-    }
-
-    // Build the SDF BLAS with a one-off command buffer
-    VkCommandBuffer commandBuffer = m_context->beginSingleTimeCommands();
-    recordAccelStructureBuild(
-        commandBuffer,
-        VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-        geometries,
-        buildRanges,
-        kSdfBlasBuildFlags,
-        m_sdfBLAS,
-        scratchBuffer.deviceAddress);
-    m_context->endSingleTimeCommands(commandBuffer);
-
-    // NCHORTEK TODO: this is only safe because endSingleTimeCommands currently performs
-    // a queue-level waitIdle
-    vkutil::destroyBuffer(*m_context, scratchBuffer);
-
     return true;
 }
 
-bool GpuScene::createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMaterialIdx)
+bool GpuScene::createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMaterialIdx, VkDeviceSize& scratchSize)
 {
     // VkTransformMatrixKHR is row-major 3x4, but glm::mat4 is column-major.
     // Transposing and copying sizeof(VkTransformMatrixKHR) drops the bottom row,
@@ -459,91 +448,114 @@ bool GpuScene::createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMat
         instances.push_back(instance);
     }
 
-    vkutil::Buffer instanceBuffer{};
+    // The instance buffer is uploaded once and kept, since every frame's TLAS build reads it.
+    // The upload waits idle, so it's complete before the first build.
     if (!vkutil::createAndUploadBuffer(
         *m_context,
         instances.data(),
         instances.size() * sizeof(VkAccelerationStructureInstanceKHR),
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        instanceBuffer))
+        m_tlasInstanceBuffer))
     {
         fprintf(stderr, "Failed to create the TLAS instance buffer.\n");
         return false;
     }
 
-    VkAccelerationStructureGeometryInstancesDataKHR instancesData{};
-    instancesData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    instancesData.arrayOfPointers = VK_FALSE;
-    instancesData.data.deviceAddress = instanceBuffer.deviceAddress;
-
-    VkAccelerationStructureGeometryKHR geometry{};
-    geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    geometry.geometry.instances = instancesData;
-
-    VkAccelerationStructureBuildRangeInfoKHR buildRange{};
-
     // primitiveCount counts whatever the geometry type's unit is.
     // For VK_GEOMETRY_TYPE_TRIANGLES_KHR its triangles, for VK_GEOMETRY_TYPE_AABBS_KHR
     // its AABBs (one per brick), and for VK_GEOMETRY_TYPE_INSTANCES_KHR its
     // VkAccelerationStructureInstanceKHR entries (one per MeshInstance, plus one for the SDF)
-    buildRange.primitiveCount = static_cast<uint32_t>(instances.size());
+    m_tlasInstanceCount = static_cast<uint32_t>(instances.size());
 
-    const std::vector<VkAccelerationStructureGeometryKHR> geometries = { geometry };
-    const std::vector<VkAccelerationStructureBuildRangeInfoKHR> buildRanges = { buildRange };
+    VkAccelerationStructureGeometryInstancesDataKHR instancesData{};
+    instancesData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    instancesData.arrayOfPointers = VK_FALSE;
+    instancesData.data.deviceAddress = m_tlasInstanceBuffer.deviceAddress;
 
-    VkDeviceSize scratchSize = 0;
+    m_tlasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    m_tlasGeometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    m_tlasGeometry.geometry.instances = instancesData;
+
     if (!createAccelStructure(
         VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-        geometries,
-        { buildRange.primitiveCount },
+        1,
+        &m_tlasGeometry,
+        &m_tlasInstanceCount,
         kTlasBuildFlags,
         m_TLAS,
         scratchSize))
     {
         fprintf(stderr, "Failed to create the TLAS.\n");
-        vkutil::destroyBuffer(*m_context, instanceBuffer);
         return false;
     }
 
-    // Create a temporary scratch buffer with the required driver-defined alignment
-    vkutil::Buffer scratchBuffer{};
-    if (!vkutil::createBuffer(
-        *m_context,
-        scratchSize,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        m_context->getAccelProperties().minAccelerationStructureScratchOffsetAlignment,
-        scratchBuffer))
+    return true;
+}
+
+void GpuScene::recordSdfBuilds(VkCommandBuffer commandBuffer)
+{
+    // Builds read and write both the structure and the scratch buffer through these accesses
+    const VkPipelineStageFlags2 buildStage = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    const VkPipelineStageFlags2 traceStage = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+    const VkAccessFlags2 accelRead = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    const VkAccessFlags2 accelWrite = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+
+    // The previous frame's trace may still be reading the SDF BLAS and TLAS, and its
+    // builds may still be using the scratch buffer, so both must finish before we rebuild
+    recordMemoryBarrier(
+        commandBuffer,
+        traceStage | buildStage,
+        accelRead | accelWrite,
+        buildStage,
+        accelRead | accelWrite);
+
+    if (m_sdfBLAS.handle != VK_NULL_HANDLE)
     {
-        fprintf(stderr, "Failed to create the TLAS scratch buffer.\n");
-        vkutil::destroyBuffer(*m_context, instanceBuffer);
-        return false;
+        // For VK_GEOMETRY_TYPE_AABBS_KHR, a primitive is one AABB (one brick)
+        VkAccelerationStructureBuildRangeInfoKHR sdfBuildRange{};
+        sdfBuildRange.primitiveCount = m_sdfBrickCount;
+
+        recordAccelStructureBuild(
+            commandBuffer,
+            VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+            1,
+            &m_sdfBlasGeometry,
+            &sdfBuildRange,
+            kSdfBlasBuildFlags,
+            m_sdfBLAS,
+            m_scratchBuffer.deviceAddress);
+
+        // The TLAS build reads the fresh SDF BLAS and reuses the scratch buffer
+        recordMemoryBarrier(
+            commandBuffer,
+            buildStage,
+            accelWrite,
+            buildStage,
+            accelRead | accelWrite);
     }
 
-    // NCHORTEK NOTE: The BLAS builds each ran through endSingleTimeCommands,
-    // which waits idle, so they are complete before this build reads them.
-    // If the wait idle is every removed, this will need sync handling
-    VkCommandBuffer commandBuffer = m_context->beginSingleTimeCommands();
+    // The mesh BLASes were built at load through endSingleTimeCommands, which waits idle,
+    // so they're complete before any frame's TLAS build reads them
+    VkAccelerationStructureBuildRangeInfoKHR tlasBuildRange{};
+    tlasBuildRange.primitiveCount = m_tlasInstanceCount;
+
     recordAccelStructureBuild(
         commandBuffer,
         VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-        geometries,
-        buildRanges,
+        1,
+        &m_tlasGeometry,
+        &tlasBuildRange,
         kTlasBuildFlags,
         m_TLAS,
-        scratchBuffer.deviceAddress);
-    m_context->endSingleTimeCommands(commandBuffer);
+        m_scratchBuffer.deviceAddress);
 
-    // NCHORTEK TODO: this is only safe because endSingleTimeCommands currently performs
-    // a queue-level waitIdle
-    vkutil::destroyBuffer(*m_context, scratchBuffer);
-
-    // Right now the instanceBuffer is only needed to build the TLAS.
-    // Because we never update the TLAS, we can safely destroy it
-    // after the TLAS is created
-    vkutil::destroyBuffer(*m_context, instanceBuffer);
-
-    return true;
+    // Rays must not traverse the TLAS until its build is complete
+    recordMemoryBarrier(
+        commandBuffer,
+        buildStage,
+        accelWrite,
+        traceStage,
+        accelRead);
 }
 
 // Creates an acceleration structure on the device.
@@ -552,8 +564,9 @@ bool GpuScene::createTLAS(const sceneutil::FlatScene& flatScene, uint32_t sdfMat
 // buffer side needed to build the acceleration structure.
 bool GpuScene::createAccelStructure(
     VkAccelerationStructureTypeKHR accelStructType,
-    const std::vector<VkAccelerationStructureGeometryKHR>& geometries,
-    const std::vector<uint32_t>& maxPrimitiveCounts,
+    uint32_t geometryCount,
+    const VkAccelerationStructureGeometryKHR* geometries,
+    const uint32_t* maxPrimitiveCounts,
     VkBuildAccelerationStructureFlagsKHR flags,
     AccelStructure& accelStruct,
     VkDeviceSize& scratchSize)
@@ -567,8 +580,8 @@ bool GpuScene::createAccelStructure(
     buildInfo.type = accelStructType;
     buildInfo.flags = flags;
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildInfo.geometryCount = static_cast<uint32_t>(geometries.size());
-    buildInfo.pGeometries = geometries.data();
+    buildInfo.geometryCount = geometryCount;
+    buildInfo.pGeometries = geometries;
 
     // Query the size of the acceleration structure and scratch buffer
     VkAccelerationStructureBuildSizesInfoKHR sizeInfo{};
@@ -578,7 +591,7 @@ bool GpuScene::createAccelStructure(
         device,
         VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
         &buildInfo,
-        maxPrimitiveCounts.data(),
+        maxPrimitiveCounts,
         &sizeInfo);
 
     // The driver builds its BVH into this buffer, so we dont have to
@@ -624,8 +637,9 @@ bool GpuScene::createAccelStructure(
 void GpuScene::recordAccelStructureBuild(
     VkCommandBuffer commandBuffer,
     VkAccelerationStructureTypeKHR accelStructType,
-    const std::vector<VkAccelerationStructureGeometryKHR>& geometries,
-    const std::vector<VkAccelerationStructureBuildRangeInfoKHR>& buildRanges,
+    uint32_t geometryCount,
+    const VkAccelerationStructureGeometryKHR* geometries,
+    const VkAccelerationStructureBuildRangeInfoKHR* buildRanges,
     VkBuildAccelerationStructureFlagsKHR flags,
     const AccelStructure& accelStruct,
     VkDeviceAddress scratchAddress)
@@ -637,12 +651,34 @@ void GpuScene::recordAccelStructureBuild(
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.srcAccelerationStructure = VK_NULL_HANDLE;
     buildInfo.dstAccelerationStructure = accelStruct.handle;
-    buildInfo.geometryCount = static_cast<uint32_t>(geometries.size());
-    buildInfo.pGeometries = geometries.data();
+    buildInfo.geometryCount = geometryCount;
+    buildInfo.pGeometries = geometries;
     buildInfo.scratchData.deviceAddress = scratchAddress;
 
-    const VkAccelerationStructureBuildRangeInfoKHR* buildRangesPtr = buildRanges.data();
-    vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildInfo, &buildRangesPtr);
+    // vkCmdBuildAccelerationStructuresKHR takes one build-range array per build info
+    vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildInfo, &buildRanges);
+}
+
+void GpuScene::recordMemoryBarrier(
+    VkCommandBuffer commandBuffer,
+    VkPipelineStageFlags2 srcStage,
+    VkAccessFlags2 srcAccess,
+    VkPipelineStageFlags2 dstStage,
+    VkAccessFlags2 dstAccess)
+{
+    VkMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    barrier.srcStageMask = srcStage;
+    barrier.srcAccessMask = srcAccess;
+    barrier.dstStageMask = dstStage;
+    barrier.dstAccessMask = dstAccess;
+
+    VkDependencyInfo dependencyInfo{};
+    dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependencyInfo.memoryBarrierCount = 1;
+    dependencyInfo.pMemoryBarriers = &barrier;
+
+    vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
 }
 
 void GpuScene::destroyAccelStructure(AccelStructure& accelStructure)

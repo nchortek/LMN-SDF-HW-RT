@@ -90,6 +90,7 @@ private:
 
     VulkanContext* m_context = nullptr;
     Swapchain* m_swapchain = nullptr;
+    GpuScene* m_gpuScene = nullptr;
     Pipeline m_pipeline;
     Gui m_gui;
 

@@ -122,7 +122,7 @@ void errorCallback(int error, const char* description)
     fprintf(stderr, "%s\n", description);
 }
 
-// bricks is null when the scene has no SDF
+// Note: bricks is null when the scene has no SDF
 bool init(const bricksutil::BricksFile* bricks)
 {
     if (!initGLFW())

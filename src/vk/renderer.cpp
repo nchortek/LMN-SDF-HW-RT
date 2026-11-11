@@ -14,6 +14,7 @@ bool Renderer::init(VulkanContext& context, Swapchain& swapchain, GLFWwindow* wi
 {
     m_context = &context;
     m_swapchain = &swapchain;
+    m_gpuScene = &gpuScene;
     m_renderExtent.width = width;
     m_renderExtent.height = height;
 
@@ -585,6 +586,9 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         fprintf(stderr, "Failed to begin recording command buffer.\n");
         return false;
     }
+
+    // Rebuild the SDF BLAS and TLAS before this frame's trace reads them
+    m_gpuScene->recordSdfBuilds(commandBuffer);
 
     // Ensure that raygen does not read or write to the accumulation image
     // until the previous frame has finished writing to it.
