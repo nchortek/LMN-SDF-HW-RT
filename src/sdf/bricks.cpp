@@ -24,7 +24,7 @@ namespace bricksutil
         {
             b.mortons.resize(b.brickCount);
             b.aabbs.resize(b.brickCount);
-            b.samples.resize(size_t(b.brickCount) * 729);
+            b.samples.resize(size_t(b.brickCount) * gpu::BRICK_SAMPLES);
 
             // The reads below process 24 + brickCount * 757 bytes. By checking EOF last,
             // we are confirming that the file is exactly the expected size.

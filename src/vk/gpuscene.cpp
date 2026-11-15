@@ -8,6 +8,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 
 // Note: sdfMaterialIdx is the SDF's index into flatScene.materials, and is only used when 
@@ -105,6 +106,9 @@ void GpuScene::destroy()
     vkutil::destroyBuffer(*m_context, m_lightBuffer);
     vkutil::destroyBuffer(*m_context, m_sceneAddressesBuffer);
     vkutil::destroyBuffer(*m_context, m_aabbBuffer);
+    vkutil::destroyBuffer(*m_context, m_mortonBuffer);
+    vkutil::destroyBuffer(*m_context, m_sampleBuffer);
+    vkutil::destroyBuffer(*m_context, m_brickCountBuffer);
     vkutil::destroyBuffer(*m_context, m_sdfSceneAddressesBuffer);
 
     m_context = nullptr;
@@ -200,8 +204,65 @@ bool GpuScene::createSdfBuffers(const bricksutil::BricksFile& bricks)
         return false;
     }
 
+    // The Morton and sample buffers are sized via gpu::MAX_BRICKS, so baking can write
+    // up to MAX_BRICKS bricks each frame, but only the first brickCount entries hold
+    // real data
+    std::vector<uint32_t> mortons = bricks.mortons;
+    mortons.resize(gpu::MAX_BRICKS, 0);
+
+    if (!vkutil::createAndUploadBuffer(
+        *m_context,
+        mortons.data(),
+        mortons.size() * sizeof(uint32_t),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        m_mortonBuffer))
+    {
+        fprintf(stderr, "Failed to create the SDF Morton index buffer on the GPU.\n");
+        return false;
+    }
+
+    // NCHORTEK TODO: This samples vector and the memcpy for-loop can both be deleted after
+    // we no longer rely on the .bricks file
+    std::vector<uint32_t> samples(size_t(gpu::MAX_BRICKS) * gpu::BRICK_STRIDE_WORDS, 0);
+    for (uint32_t i = 0; i < bricks.brickCount; i++)
+    {
+        memcpy(samples.data() + size_t(i) * gpu::BRICK_STRIDE_WORDS,
+            bricks.samples.data() + size_t(i) * gpu::BRICK_SAMPLES,
+            gpu::BRICK_SAMPLES);
+    }
+
+    if (!vkutil::createAndUploadBuffer(
+        *m_context,
+        samples.data(),
+        samples.size() * sizeof(uint32_t),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        m_sampleBuffer))
+    {
+        fprintf(stderr, "Failed to create the SDF sample buffer on the GPU.\n");
+        return false;
+    }
+
+    // NCHORTEK TODO: We'll need to update all these references to bricks.* once
+    // we no longer use the .bricks file
+    if (!vkutil::createAndUploadBuffer(
+        *m_context,
+        &bricks.brickCount,
+        sizeof(uint32_t),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        m_brickCountBuffer))
+    {
+        fprintf(stderr, "Failed to create the SDF brick count buffer on the GPU.\n");
+        return false;
+    }
+
     gpu::SdfSceneAddresses sdfSceneAddresses{};
     sdfSceneAddresses.aabbsAddr = m_aabbBuffer.deviceAddress;
+    sdfSceneAddresses.mortonsAddr = m_mortonBuffer.deviceAddress;
+    sdfSceneAddresses.samplesAddr = m_sampleBuffer.deviceAddress;
+    sdfSceneAddresses.brickCountAddr = m_brickCountBuffer.deviceAddress;
+    sdfSceneAddresses.domainMin = glm::vec3(bricks.domainMin[0], bricks.domainMin[1], bricks.domainMin[2]);
+    sdfSceneAddresses.voxelSize = bricks.voxelSize;
+    sdfSceneAddresses.band = bricks.band;
 
     if (!vkutil::createAndUploadBuffer(
         *m_context,
