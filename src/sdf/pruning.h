@@ -78,6 +78,47 @@ public:
 
     bool runPruning();
 
+    //getter functions for maaaaaaaaaaaaaaaaarrrrrrrk
+    //input buffer data
+    const vkutil::Buffer& getPrims() { 
+        return m_prims; 
+    }
+    const vkutil::Buffer& getBinaryOps() { 
+        return m_binaryOps; 
+    }
+    const vkutil::Buffer& getNodes() {
+        return m_nodes;
+    }
+
+    //256^3 pruning results
+    const vkutil::Buffer& getFinalActiveNodes() {
+        return m_activeNodes[m_outputIdx];
+    }
+    const vkutil::Buffer& getFinalCellOffsets() {
+        return m_cellOffsets[m_outputIdx];
+    }
+    const vkutil::Buffer& getFinalNumActive() {
+        return m_numActive[m_outputIdx];
+    }
+    const vkutil::Buffer& getFinalCellErrors() {
+        return m_cellErrors[m_outputIdx];
+    }
+    //64^3 pruning results
+    const vkutil::Buffer& getBrickNumActive() {
+        return m_numActive[m_inputIdx];
+    }
+
+    //other nums
+    int getNodeCount() {
+        return m_nodeCount;
+    }
+    glm::vec3 getAabbMin() {
+        return m_aabbMin;
+    }
+    glm::vec3 getAabbMax() {
+        return m_aabbMax;
+    }
+
 private:
     VulkanContext* m_context = nullptr;
 
