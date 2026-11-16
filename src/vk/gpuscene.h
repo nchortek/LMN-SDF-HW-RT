@@ -63,6 +63,9 @@ private:
 
     // SDF buffers, only created when the scene has an SDF
     vkutil::Buffer m_aabbBuffer{};
+    vkutil::Buffer m_mortonBuffer{};
+    vkutil::Buffer m_sampleBuffer{};
+    vkutil::Buffer m_brickCountBuffer{};
     vkutil::Buffer m_sdfSceneAddressesBuffer{};
 
     struct AccelStructure
