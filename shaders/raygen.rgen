@@ -25,6 +25,7 @@ layout(location = 0) rayPayloadEXT IntersectionInfo payload;
 
 vec3 primaryRayDirection(vec2 pixel);
 vec3 debugViewColor(Ray ray);
+vec3 directLightingColor(Ray ray);
 SurfaceInteraction sceneIntersect(Ray ray);
 vec3 li_naive(Ray ray);
 vec3 li_direct(Ray ray);
@@ -35,8 +36,15 @@ vec3 sample_li(vec3 viewPoint, vec3 faceForwardGeometricNor, out vec3 wiW, out f
 const float kFocalDistance = 11.5;
 const float kLensRadius = 0.5;
 
+// Constants for debug view
 // Debug view color for rays that hit nothing
 const vec3 kDebugViewMissColor = vec3(0.1);
+
+// Constants for direct lighting mode
+// LightDir points towards the light
+const vec3 kLightDir = normalize(vec3(1.0, 1.0, 1.0));
+const float kAmbientLight = 0.4;
+const vec3 kSkyColor = vec3(1.0);
 
 void main()
 {
@@ -46,12 +54,20 @@ void main()
     // and +y increases down the screen.
     const ivec2 pixelCoord = ivec2(gl_LaunchIDEXT.xy);
 
-    // The debug view traces one ray through the pixel center and writes its color straight
-    // to the display image, skipping the integrator and accumulation
     if ((pc.flags & kFlagDebugView) != 0u)
     {
+        // The debug render mode traces one ray through the pixel center and writes its color straight
+        // to the display image, skipping the integrator and accumulation
         Ray debugRay = Ray(pc.camera.position, primaryRayDirection(vec2(pixelCoord) + 0.5));
         imageStore(displayImage, pixelCoord, vec4(debugViewColor(debugRay), 1.0));
+        return;
+    }
+    else if ((pc.flags & kFlagDirectLighting) != 0u)
+    {
+        // The direct lighting render mode traces one ray through the pixel center, and writes
+        // its color straight to the display image, skipping the integrator and accumulation
+        Ray directRay = Ray(pc.camera.position, primaryRayDirection(vec2(pixelCoord) + 0.5));
+        imageStore(displayImage, pixelCoord, vec4(directLightingColor(directRay), 1.0));
         return;
     }
 
@@ -118,6 +134,52 @@ vec3 debugViewColor(Ray ray)
     float facingRatio = abs(dot(surface.isect.worldGeometricNor, -ray.direction));
 
     return primitiveColor * (0.3 + 0.7 * facingRatio);
+}
+
+// Computes a surface color using the primary hit plus a fixed number of secondary rays (e.g. a shadow ray)
+vec3 directLightingColor(Ray ray)
+{
+    SurfaceInteraction surface = sceneIntersect(ray);
+
+    if (surface.isect.t == kMiss)
+    {
+        return kSkyColor;
+    }
+
+    float cosTheta = dot(surface.isect.worldShadingNor, kLightDir);
+    float lightContribution = 0.0;
+
+    // If the light is in front of the surface, trace a shadow ray
+    if (cosTheta > 0.0)
+    {
+        Ray shadowRay = spawnRay(surface.isect.worldPos, kLightDir);
+        payload.t = 0.0;
+
+        traceRayEXT(
+            TLAS,
+            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+            kInstanceMaskAllBitsSet,
+            0,
+            0,
+            0,
+            shadowRay.origin,
+            kTMin,
+            shadowRay.direction,
+            kTMax,
+            0);
+
+        if (payload.t == kMiss)
+        {
+            lightContribution = cosTheta;
+        }
+    }
+
+    vec3 color = surface.material.baseColor * (kAmbientLight + lightContribution);
+    color = clamp(color, 0.0, 1.0);
+
+    // We only apply gamma correction here (and not Reinhardt), because we are not
+    // dealing with full HDR color values
+    return pow(color, vec3(1.0 / 2.2));
 }
 
 SurfaceInteraction sceneIntersect(Ray ray)

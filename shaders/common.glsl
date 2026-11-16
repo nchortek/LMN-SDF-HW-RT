@@ -41,9 +41,9 @@ layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer Sdf
     SdfSceneAddresses sdfDeviceAddresses;
 };
 
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer AabbBuffer
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer MortonBuffer
 {
-    Aabb aabbs[];
+    uint mortons[];
 };
 
 // Constants/Sentinels
