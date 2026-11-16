@@ -6,6 +6,11 @@
 #include <cstdio>
 #include <iostream>
 #include <utility>
+#include <vector>
+
+#ifndef NDEBUG
+#include <cstring>
+#endif
 
 //referenced from gpuscene.cpp
 bool SdfPruning::init(VulkanContext& context, const Scene& scene){
@@ -33,6 +38,10 @@ bool SdfPruning::init(VulkanContext& context, const Scene& scene){
         fprintf(stderr, "SdfPruning: runPruning failed\n");
         return false;
     }
+
+    #ifndef NDEBUG
+    printPruningStats();
+    #endif
 
     return true;
 }
@@ -344,5 +353,76 @@ bool SdfPruning::createCullingPipeline(){
     }
 
     return true;
-
 }
+
+#ifndef NDEBUG
+bool SdfPruning::readbackBuffer(const vkutil::Buffer& src, VkDeviceSize size, void* dst){
+    VmaAllocator allocator = m_context->getAllocator();
+
+    //host-readable staging buffer
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VmaAllocation stagingAlloc = VK_NULL_HANDLE;
+    VmaAllocationInfo stagingInfo{};
+    if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &staging, &stagingAlloc, &stagingInfo) != VK_SUCCESS){
+        fprintf(stderr, "SdfPruning: failed to create readback staging buffer\n");
+        return false;
+    }
+
+    VkCommandBuffer cmd = m_context->beginSingleTimeCommands();
+
+    //compute writes from runPruning -> this copy
+    recordMemoryBarrier(cmd,
+        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+
+    VkBufferCopy region{};
+    region.srcOffset = 0;
+    region.dstOffset = 0;
+    region.size = size;
+    vkCmdCopyBuffer(cmd, src.bufferHandle, staging, 1, &region);
+
+    //copy -> CPU read
+    recordMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
+    m_context->endSingleTimeCommands(cmd);
+
+    //read-side counterpart of vmaFlushAllocation (no-op if host-coherent)
+    vmaInvalidateAllocation(allocator, stagingAlloc, 0, VK_WHOLE_SIZE);
+    memcpy(dst, stagingInfo.pMappedData, (size_t)size);
+
+    vmaDestroyBuffer(allocator, staging, stagingAlloc);
+    return true;
+}
+
+void SdfPruning::printPruningStats(){
+    std::vector<int32_t> activeCounts(numLevelSlots, 0);
+    std::vector<int32_t> tmpCounts(numLevelSlots, 0);
+
+    if (!readbackBuffer(m_activeCount, numLevelSlots * sizeof(int32_t), activeCounts.data()) || !readbackBuffer(m_oldToNewCount, numLevelSlots * sizeof(int32_t), tmpCounts.data())){
+        fprintf(stderr, "SdfPruning: counter readback failed\n");
+        return;
+    }
+
+    for (int lvl = 2; lvl <= finalGridLvl; lvl += 2){
+        std::cout << "lvl " << lvl << " (" << (1 << lvl) << "^3): active_count " << activeCounts[lvl] << ", old_to_new_count " << tmpCounts[lvl] << std::endl;
+
+        //shader has no overflow guard
+        if (activeCounts[lvl] < 0 || (uint64_t)activeCounts[lvl] > maxActiveCount){
+            std::cerr << "  active_count exceeds maxActiveCount" << std::endl;
+        }
+        if (tmpCounts[lvl] < 0 || (uint64_t)tmpCounts[lvl] > maxTmpCount){
+            std::cerr << "  old_to_new_count exceeds maxTmpCount" << std::endl;
+        }
+    }
+    std::cout << "final 256^3 results in slot " << m_outputIdx << ", 64^3 in slot " << m_inputIdx << std::endl;
+}
+#endif

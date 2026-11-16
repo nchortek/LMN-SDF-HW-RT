@@ -129,4 +129,10 @@ private:
     VkAccessFlags2 srcAccess,
     VkPipelineStageFlags2 dstStage,
     VkAccessFlags2 dstAccess);
+    
+    //pruning port validation
+#ifndef NDEBUG
+    bool readbackBuffer(const vkutil::Buffer& src, VkDeviceSize size, void* dst);
+    void printPruningStats();
+#endif
 };
