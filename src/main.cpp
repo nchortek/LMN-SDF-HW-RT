@@ -39,7 +39,16 @@ static double lastY;
 static bool camchanged = true;
 static bool showGui = true;
 static bool enableDOF = false;
-static bool enableDebugView = false;
+
+// Mutually excluse render modes, read by raygen to determine shading logic
+enum RenderMode
+{
+    kRenderModePathTracer,
+    kRenderModeDirectLighting,
+    kRenderModeDebugView
+};
+
+static int renderMode = kRenderModePathTracer;
 
 float zoom, theta, phi;
 glm::vec3 cameraPosition;
@@ -124,6 +133,14 @@ void errorCallback(int error, const char* description)
     fprintf(stderr, "%s\n", description);
 }
 
+// Sets the raygen flags so that only the selected RenderMode is enabled
+void updateRenderMode()
+{
+    renderer->setDirectLightingMode(renderMode == kRenderModeDirectLighting);
+    renderer->setDebugView(renderMode == kRenderModeDebugView);
+    renderer->resetRenderedFrameCount();
+}
+
 // Note: bricks is null when the scene has no SDF
 bool init(const bricksutil::BricksFile* bricks)
 {
@@ -180,9 +197,9 @@ bool init(const bricksutil::BricksFile* bricks)
 
     renderer->setMaxTraceDepth(renderState->traceDepth);
 
-    // SDF scenes start in the debug view
-    enableDebugView = scene->hasSdf;
-    renderer->setDebugView(enableDebugView);
+    // SDF scenes start in the direct lighting render mode
+    renderMode = scene->hasSdf ? kRenderModeDirectLighting : kRenderModePathTracer;
+    updateRenderMode();
 
     return true;
 }
@@ -211,10 +228,15 @@ void RenderImGui()
             renderer->resetRenderedFrameCount();
         }
 
-        if (ImGui::Checkbox("Debug view", &enableDebugView))
+        // Each radio button sets renderMode to its own value when clicked
+        ImGui::SeparatorText("Render Mode");
+        bool renderModeChanged = ImGui::RadioButton("Path Tracer", &renderMode, kRenderModePathTracer)
+            || ImGui::RadioButton("Direct Lighting", &renderMode, kRenderModeDirectLighting)
+            || ImGui::RadioButton("Debug View", &renderMode, kRenderModeDebugView);
+
+        if (renderModeChanged)
         {
-            renderer->setDebugView(enableDebugView);
-            renderer->resetRenderedFrameCount();
+            updateRenderMode();
         }
 
         // Each scope's GPU time, averaged over the last N frames
