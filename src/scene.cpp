@@ -89,6 +89,30 @@ void Scene::loadFromJSON(const std::string& jsonName)
         hasSdf = true;
         sdfBricksPath = bricksPath.string();
         sdfMaterialIdx = MatNameToID.at(sdfData["MATERIAL"]);
+
+        if(sdfData.contains("CSG")){
+        const std::filesystem::path csgPath = std::filesystem::path(jsonName).parent_path()
+            / sdfData["CSG"].get<std::string>();
+
+            string sdfCsgPath = csgPath.string();
+
+            std::vector<CSGNode> localCSGNodes;
+
+            int cpuRootIdx = load_csg_scene(sdfCsgPath, localCSGNodes, paddedAABBmin, paddedAABBmax);
+
+            gpuRootIdx = ConvertToGPUTree(cpuRootIdx, localCSGNodes, gpuNodeList, primitiveList, binaryOpList, parents, activeNodes); 
+
+            nodeCount = (int)localCSGNodes.size();
+
+            hasCsg = true;
+
+            std::cout << "CSG nodes: " << nodeCount << std::endl;
+            std::cout << "prims: " << primitiveList.size() << std::endl;
+            std::cout << "ops: " << binaryOpList.size() << std::endl;
+            std::cout << "gpu root: " << gpuRootIdx << std::endl;
+            std::cout << "paddedAABBMin " << glm::to_string(paddedAABBmin) << std::endl;
+            std::cout << "paddedAABBMax  " << glm::to_string(paddedAABBmax) << std::endl;
+        }
     }
 
     // Objects is optional, since a scene may contain only an SDF
@@ -158,5 +182,5 @@ void Scene::loadFromJSON(const std::string& jsonName)
     //set up render camera stuff
     int arraylen = camera.resolution.x * camera.resolution.y;
     state.image.resize(arraylen);
-    std::fill(state.image.begin(), state.image.end(), glm::vec3());
+    std::fill(state.image.begin(), state.image.end(), glm::vec3(0.0f));
 }

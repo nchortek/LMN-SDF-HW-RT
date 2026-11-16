@@ -7,3 +7,7 @@ VulkanMemoryAllocator: v3.4.0 (3aa9212)
 tinygltf: v2.9.7 (488a70a)
 
 imgui: v1.92.9b (f1cc2ae15)
+
+glm: v1.0 from https://github.com/wbrbr/LipschitzPruning
+
+rapidjson from https://github.com/wbrbr/LipschitzPruning 
