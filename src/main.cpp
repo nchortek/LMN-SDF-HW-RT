@@ -16,6 +16,7 @@
 #include "vk/gpuscene.h"
 
 #include "sdf/bricks.h"
+#include "sdf/pruning.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -54,6 +55,7 @@ int height;
 std::unique_ptr<VulkanContext> context;
 std::unique_ptr<Swapchain> swapchain;
 std::unique_ptr<GpuScene> gpuScene;
+std::unique_ptr<SdfPruning> sdfPruning;
 std::unique_ptr<Renderer> renderer;
 
 GLFWwindow* window;
@@ -155,6 +157,14 @@ bool init(const bricksutil::BricksFile* bricks)
         if (!gpuScene->init(*context, flatScene, bricks, scene->sdfMaterialIdx))
         {
             fprintf(stderr, "Failed to initialize GpuScene\n");
+            return false;
+        }
+    }
+
+    if(scene->hasCsg){
+        sdfPruning = std::make_unique<SdfPruning>();
+        if(!sdfPruning -> init(*context, *scene)){
+            fprintf(stderr, "Failed to initialize SdfPruning\n");
             return false;
         }
     }
@@ -264,6 +274,7 @@ void cleanup()
     }
     
     renderer.reset();
+    sdfPruning.reset();
     gpuScene.reset();
     swapchain.reset();
     context.reset();

@@ -76,6 +76,9 @@ public:
         return m_callableDeviceAddrRegion;
     }
 
+    static bool createVkShaderModule(VkDevice device, const std::vector<uint32_t>& code, VkShaderModule& shaderModule);
+    static bool readSpirvFile(const std::string& filename, std::vector<uint32_t>& code);
+
 private:
     // Absolute SPIR-V output directory, set by CMake on-build
     static constexpr const char* kShaderDirectoryPath = SHADER_DIR;
@@ -112,7 +115,4 @@ private:
     bool createPipelineLayout();
     bool createPipeline();
     bool createShaderBindingTable();
-
-    static bool createVkShaderModule(VkDevice device, const std::vector<uint32_t>& code, VkShaderModule& shaderModule);
-    static bool readSpirvFile(const std::string& filename, std::vector<uint32_t>& code);
 };

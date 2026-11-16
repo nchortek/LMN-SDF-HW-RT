@@ -95,12 +95,21 @@ bool VulkanContext::selectPhysicalDevice(vkb::PhysicalDevice& physicalDevice)
 {
     VkPhysicalDeviceFeatures features10{};
     features10.shaderInt64 = VK_TRUE;
+    features10.shaderInt16 = VK_TRUE;
+
+    //pruning port - pruning shaders uses GPU features the engine never asked for, vulkan requries a feature to be enabled when the device is created
+    VkPhysicalDeviceVulkan11Features features11{};
+    features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    features11.storageBuffer16BitAccess = VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.bufferDeviceAddress = VK_TRUE;
     features12.scalarBlockLayout = VK_TRUE;
     features12.descriptorIndexing = VK_TRUE;
+    //pruning port
+    features12.shaderFloat16 = VK_TRUE;
+    features12.storageBuffer8BitAccess = VK_TRUE;
 
     VkPhysicalDeviceVulkan13Features features13{};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -119,6 +128,7 @@ bool VulkanContext::selectPhysicalDevice(vkb::PhysicalDevice& physicalDevice)
         .set_surface(m_surface)
         .set_minimum_version(1, 3)
         .set_required_features(features10)
+        .set_required_features_11(features11)
         .set_required_features_12(features12)
         .set_required_features_13(features13)
         .add_required_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)

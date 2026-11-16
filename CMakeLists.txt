@@ -9,7 +9,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -49,6 +49,7 @@ find_package(GLM REQUIRED)
 add_library(volk STATIC ${EXTERNAL}/volk/volk.c)
 target_include_directories(volk PUBLIC ${EXTERNAL}/volk)
 target_compile_definitions(volk PUBLIC VK_NO_PROTOTYPES)
+
 if(WIN32)
     target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)
 endif()
@@ -110,6 +111,9 @@ set(headers
     src/vk/gpuscene.h
     src/vk/gputimer.h
     src/vk/utils/buffer.h
+    src/gpu/pruning_constants.h
+    src/sdf/csg.h
+    src/sdf/pruning.h
 )
 
 set(sources
@@ -129,6 +133,8 @@ set(sources
     src/vk/gpuscene.cpp
     src/vk/gputimer.cpp
     src/vk/utils/buffer.cpp
+    src/sdf/csg.cpp
+    src/sdf/pruning.cpp
 )
 
 add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers})
@@ -150,6 +156,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
     imgui
     ${GLFW_LIBRARIES}
 )
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 if(WIN32)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -195,6 +203,7 @@ set(shader_entry_points
     mesh.rchit
     sdf_brick.rint
     sdf.rchit
+    pruning/culling.comp
 )
 
 if(shader_entry_points)
@@ -204,6 +213,9 @@ if(shader_entry_points)
     foreach(shader ${shader_entry_points})
         set(spv ${SHADER_OUT_DIR}/${shader}.spv)
         set(dep ${SHADER_OUT_DIR}/${shader}.d)
+
+        get_filename_component(spv_dir ${spv} DIRECTORY)
+        file(MAKE_DIRECTORY ${spv_dir})
 
         # -I src: for #include "gpu/shared.h"
         # -g (every configuration): lets Nsight Graphics map profiling data to GLSL source
@@ -230,6 +242,10 @@ if(shader_entry_points)
 
     # Add GLSL helpers that do not contain entry points here so they're
     # visible in the VS solution
+    list(APPEND shader_sources ${SHADER_SRC_DIR}/pruning/common.glsl)
+    list(APPEND shader_sources ${SHADER_SRC_DIR}/pruning/common_culling.glsl)
+    list(APPEND shader_sources ${SHADER_SRC_DIR}/pruning/extensions.glsl)
+
     list(APPEND shader_sources ${SHADER_SRC_DIR}/common.glsl)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/math.glsl)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/sampleWarping.glsl)

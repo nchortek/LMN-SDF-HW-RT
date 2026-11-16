@@ -9,6 +9,7 @@
     },
     "SDF":
     {
+        "CSG": "csg/monument.json",
         "BRICKS":"monument.bricks",
         "MATERIAL":"sdf_white"
     },

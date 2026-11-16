@@ -2,6 +2,7 @@
 
 #include "sceneStructs.h"
 #include <vector>
+#include "sdf/csg.h"
 
 class Scene
 {
@@ -18,6 +19,20 @@ public:
 
     // Whether or not the scene contains SDF data
     bool hasSdf = false;
+    bool hasCsg = false;
+
+    glm::vec3 paddedAABBmin = glm::vec3(0.0);
+    glm::vec3 paddedAABBmax = glm::vec3(0.0);
+    
+    int gpuRootIdx = -1;
+    int nodeCount = -1;
+
+    std::vector<GPUNode> gpuNodeList;
+    std::vector<Primitive> primitiveList;
+    std::vector<BinaryOp> binaryOpList;
+
+    std::vector<uint16_t> parents;
+    std::vector<uint16_t> activeNodes;
 
     // The .bricks filepath (The JSON file contains a filepath relative to the scene
     // JSON's folder, but we store it here relative to the working directory)
@@ -30,6 +45,7 @@ private:
     static constexpr uint32_t kCubeMeshIndex = 0;
     static constexpr uint32_t kSphereMeshIndex = 1;
     static constexpr uint32_t kIcosphereSubdivisions = 4;
+
 
     void loadFromJSON(const std::string& jsonName);
 };

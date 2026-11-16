@@ -1,0 +1,222 @@
+#include "pruning.h"
+
+#include "scene.h"
+#include "vk/context.h"
+#include "vk/pipeline.h"
+#include <cstdio>
+#include <iostream>
+
+//referenced from gpuscene.cpp
+bool SdfPruning::init(VulkanContext& context, const Scene& scene){
+    m_context = &context;
+
+    m_nodeCount = scene.nodeCount;
+    m_gpuRootIdx = scene.gpuRootIdx;
+    m_aabbMin = scene.paddedAABBmin;
+    m_aabbMax = scene.paddedAABBmax;
+
+    if(!createInputBuffers(scene)){
+        fprintf(stderr, "SdfPruning: failed to create input buffers\n");
+        return false;
+    }
+    if(!createWorkBuffers()){
+        fprintf(stderr, "SdfPruning: failed to create work buffers\n");
+        return false;
+    }
+    if(!createCullingPipeline()){
+        fprintf(stderr, "SdfPruning: failed to create culling pipeline\n");
+        return false;
+    }
+
+    return true;
+}
+
+void SdfPruning::destroy(){
+    if(m_context == nullptr){
+        return;
+    }
+
+    VkDevice device = m_context->getDevice();
+    vkDestroyPipeline(device, m_pruningPipeline, nullptr);
+    m_pruningPipeline = VK_NULL_HANDLE;
+    vkDestroyPipelineLayout(device, m_pruningLayout, nullptr);
+    m_pruningLayout = VK_NULL_HANDLE;
+
+    vkutil::destroyBuffer(*m_context, m_nodes);
+    vkutil::destroyBuffer(*m_context, m_binaryOps);
+    vkutil::destroyBuffer(*m_context, m_prims);
+    vkutil::destroyBuffer(*m_context, m_parentsInit);
+    vkutil::destroyBuffer(*m_context, m_activeNodesInit);
+
+    for(int i = 0; i < 2; i++){
+        vkutil::destroyBuffer(*m_context, m_numActive[i]);
+        vkutil::destroyBuffer(*m_context, m_cellOffsets[i]);
+        vkutil::destroyBuffer(*m_context, m_cellErrors[i]);
+        vkutil::destroyBuffer(*m_context, m_activeNodes[i]);
+        vkutil::destroyBuffer(*m_context, m_parents[i]);
+    }
+
+    vkutil::destroyBuffer(*m_context, m_tmp);
+    vkutil::destroyBuffer(*m_context, m_oldToNewScratch);
+    vkutil::destroyBuffer(*m_context, m_activeCount);
+    vkutil::destroyBuffer(*m_context, m_oldToNewCount);
+
+    m_context = nullptr;
+}
+
+//referenced from context.cpp
+bool SdfPruning::createInputBuffers(const Scene& scene){
+    VkBufferUsageFlags buffer_usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    if (!vkutil::createAndUploadBuffer(*m_context, scene.gpuNodeList.data(), scene.gpuNodeList.size()*sizeof(GPUNode), buffer_usage, m_nodes)){
+        fprintf(stderr, "Failed to create the m_nodes buffer on the GPU.\n");
+        return false;
+    }
+ 
+    if (!scene.binaryOpList.empty() && !vkutil::createAndUploadBuffer(*m_context, scene.binaryOpList.data(), scene.binaryOpList.size()*sizeof(BinaryOp), buffer_usage, m_binaryOps)){
+          fprintf(stderr, "Failed to create the binaryops buffer on the GPU.\n");
+        return false;
+    }
+    
+    if (!vkutil::createAndUploadBuffer(*m_context, scene.primitiveList.data(), scene.primitiveList.size()*sizeof(Primitive), buffer_usage, m_prims)){
+          fprintf(stderr, "Failed to create the primitive buffer on the GPU.\n");
+        return false;
+    }
+    
+    if (!vkutil::createAndUploadBuffer(*m_context, scene.parents.data(), scene.parents.size()*sizeof(uint16_t), buffer_usage, m_parentsInit)){
+          fprintf(stderr, "Failed to create the parents buffer on the GPU.\n");
+        return false;
+    }
+
+    if (!vkutil::createAndUploadBuffer(*m_context, scene.activeNodes.data(), scene.activeNodes.size()*sizeof(uint16_t), buffer_usage, m_activeNodesInit)){
+      fprintf(stderr, "Failed to create the activenodes buffer on the GPU.\n");
+        return false;
+    }
+
+    return true;
+}
+
+//referenced from context.cpp
+bool SdfPruning::createWorkBuffers(){
+    VkBufferUsageFlags buffer_usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    const VkDeviceSize gridIntSize = numCells * sizeof(int32_t); //num_active, cell_offsets
+    const VkDeviceSize gridFloatSize = numCells * sizeof(float); //cell_errors
+    const VkDeviceSize activeListSize = maxActiveCount * sizeof(uint16_t); //active_nodes, parents
+    const VkDeviceSize tmpSize = maxTmpCount * sizeof(uint32_t);
+    const VkDeviceSize oldToNewSize = maxTmpCount * sizeof(uint16_t);
+    const VkDeviceSize counterSize = numLevelSlots * sizeof(int32_t); //one int per grid level
+
+    //pingpong
+    for(int i = 0; i < 2; i++){
+        if (!vkutil::createBuffer(*m_context, gridIntSize, buffer_usage, 0, m_numActive[i])){
+            fprintf(stderr, "Failed to create the num_active buffer on the GPU.\n");
+            return false;
+        }
+        if (!vkutil::createBuffer(*m_context, gridIntSize, buffer_usage, 0, m_cellOffsets[i])){
+            fprintf(stderr, "Failed to create the cell_offsets buffer on the GPU.\n");
+            return false;
+        }
+        if (!vkutil::createBuffer(*m_context, gridFloatSize, buffer_usage, 0, m_cellErrors[i])){
+            fprintf(stderr, "Failed to create the cell_errors buffer on the GPU.\n");
+            return false;
+        }
+        if (!vkutil::createBuffer(*m_context, activeListSize, buffer_usage, 0, m_activeNodes[i])){
+            fprintf(stderr, "Failed to create the active_nodes buffer on the GPU.\n");
+            return false;
+        }
+        if (!vkutil::createBuffer(*m_context, activeListSize, buffer_usage, 0, m_parents[i])){
+            fprintf(stderr, "Failed to create the parents buffer on the GPU.\n");
+            return false;
+        }
+    }
+
+    //scratch
+    if (!vkutil::createBuffer(*m_context, tmpSize, buffer_usage, 0, m_tmp)){
+        fprintf(stderr, "Failed to create the tmp buffer on the GPU.\n");
+        return false;
+    }
+    if (!vkutil::createBuffer(*m_context, oldToNewSize, buffer_usage, 0, m_oldToNewScratch)){
+        fprintf(stderr, "Failed to create the old_to_new_scratch buffer on the GPU.\n");
+        return false;
+    }
+
+    //per-level atomic counters
+    if (!vkutil::createBuffer(*m_context, counterSize, buffer_usage, 0, m_activeCount)){
+        fprintf(stderr, "Failed to create the active_count buffer on the GPU.\n");
+        return false;
+    }
+    if (!vkutil::createBuffer(*m_context, counterSize, buffer_usage, 0, m_oldToNewCount)){
+        fprintf(stderr, "Failed to create the old_to_new_count buffer on the GPU.\n");
+        return false;
+    }
+
+    const VkDeviceSize totalBytes = 2 * (2 * gridIntSize + gridFloatSize + 2 * activeListSize) + tmpSize + oldToNewSize + 2 * counterSize;
+    std::cout << "SdfPruning allocated " << (double)totalBytes / 1000000000.0 << " GB of work buffers" << std::endl;  
+
+    return true;
+}
+
+bool SdfPruning::createCullingPipeline(){
+    VkDevice device = m_context->getDevice();
+
+    //load shader
+    std::vector<uint32_t> code; //code holding raw words
+    if(!Pipeline::readSpirvFile(std::string(SHADER_DIR) + "/pruning/culling.comp.spv", code)){
+        fprintf(stderr, "Failed to read SdfPruning spirv.\n");
+        return false;
+    }
+
+    //create module (vulkans' object for a piece of shader code that has been handed to the driver but not compiled yet - a SPIR-V blob with a handle)
+    VkShaderModule module = VK_NULL_HANDLE;
+    if(!Pipeline::createVkShaderModule(m_context->getDevice(), code, module)){
+        fprintf(stderr, "Failed to create SdfPruning module.\n");
+        return false;
+    }
+
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(PruningPushConstants);
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 0;
+    layoutInfo.pSetLayouts = nullptr;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstantRange;
+
+    if(vkCreatePipelineLayout(device, &layoutInfo, nullptr, &m_pruningLayout) != VK_SUCCESS){
+        m_pruningLayout = VK_NULL_HANDLE;
+        vkDestroyShaderModule(device, module, nullptr);
+        fprintf(stderr, "Failed to create SdfPruning pruning pipeline layout\n");
+        return false;
+    }
+
+    //compute pipeline
+    VkPipelineShaderStageCreateInfo stageInfo{};
+    stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageInfo.module = module;
+    stageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.stage = stageInfo;
+    pipelineInfo.layout = m_pruningLayout;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineInfo.basePipelineIndex = -1;
+
+    VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pruningPipeline);
+
+    //module is baked into the pipeline
+    vkDestroyShaderModule(device, module, nullptr);
+    if(result != VK_SUCCESS){
+        m_pruningPipeline = VK_NULL_HANDLE;
+        fprintf(stderr, "Failed to create culling compute pipeline\n");
+        return false;
+    }
+
+    return true;
+
+}
