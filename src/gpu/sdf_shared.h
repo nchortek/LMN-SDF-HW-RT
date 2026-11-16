@@ -9,6 +9,9 @@ GPU_NAMESPACE_BEGIN
 // Capacity of the brick buffers. Unused AABB slots are set to NaN to signify inactive primitives.
 GPU_CONST uint MAX_BRICKS = 131072;
 
+// The number of voxels along each axis within a brick
+GPU_CONST uint BRICK_VOXELS = 8;
+
 // The number of SDF samples per brick (9x9x9)
 GPU_CONST uint BRICK_SAMPLES = 729;
 

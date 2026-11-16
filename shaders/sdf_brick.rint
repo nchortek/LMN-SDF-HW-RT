@@ -5,35 +5,75 @@
 #include "gpu/shared.h"
 #include "common.glsl"
 
-// This shader handles intersections with SDF bricks.
-// For now we just report where the ray enters the brick's AABB.
+// This shader handles intersections with SDF bricks,
+// reporting where the ray enters the brick's 3D space
+// (not the tight bounding box)
 
 layout(push_constant, scalar) uniform PushConstantBlock
 {
     PushConstants pc;
 };
 
+// Copied over from pruning/common.glsl
+// 
+// NCHORTEK TODO: We should tidy up the code base after M2 and reorganize
+// things to avoid code duplication and ensure proper object-oriented
+// design principles.
+// 
+// For example: All of the morton helpers could go in a dedicated (and small) 
+// morton.glsl file that the other shaders include as needed.
+//
+// https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
+uint compact1By2(uint x)
+{
+    x &= 0x09249249u;
+    x = (x ^ (x >> 2)) & 0x030c30c3u;
+    x = (x ^ (x >> 4)) & 0x0300f00fu;
+    x = (x ^ (x >> 8)) & 0xff0000ffu;
+    x = (x ^ (x >> 16)) & 0x000003ffu;
+    return x;
+}
+
+uvec3 mortonDecode(uint morton)
+{
+    return uvec3(compact1By2(morton),
+        compact1By2(morton >> 1),
+        compact1By2(morton >> 2));
+}
+
 void main()
 {
     SceneAddresses sceneAddresses = SceneAddressesBuffer(pc.sceneAddr).deviceAddresses;
     SdfSceneAddresses sdfAddresses = SdfSceneAddressesBuffer(sceneAddresses.sdfAddr).sdfDeviceAddresses;
 
-    // gl_PrimitiveID is the brick index
-    Aabb box = AabbBuffer(sdfAddresses.aabbsAddr).aabbs[gl_PrimitiveID];
+    // Calculate the brick's full length per axis
+    float brickSideLen = float(BRICK_VOXELS) * sdfAddresses.voxelSize;
+
+    // gl_PrimitiveID is the brick index which we use to index into
+    // the parallel buffers containing brick data.
+    // 
+    // A brick's morton code stores the brick's grid indices
+    // (i.e. its integer XYZ coordinates into the 3D grid of bricks)
+    uint morton = MortonBuffer(sdfAddresses.mortonsAddr).mortons[gl_PrimitiveID];
+
+    // Use the brick grid indices to define the brick's total span in object space
+    // (this can be larger than the tight bounding box we intersect against)
+    vec3 brickMin = sdfAddresses.domainMin + vec3(mortonDecode(morton)) * brickSideLen;
+    vec3 brickMax = brickMin + vec3(brickSideLen);
 
     // Slab test in object space
     vec3 invDir = 1.0 / gl_ObjectRayDirectionEXT;
-    vec3 t0 = (box.minValues - gl_ObjectRayOriginEXT) * invDir;
-    vec3 t1 = (box.maxValues - gl_ObjectRayOriginEXT) * invDir;
+    vec3 t0 = (brickMin - gl_ObjectRayOriginEXT) * invDir;
+    vec3 t1 = (brickMax - gl_ObjectRayOriginEXT) * invDir;
     vec3 tNear = min(t0, t1);
     vec3 tFar = max(t0, t1);
 
     // This is the furthest t-values for which the ray enters any slab,
-    // which is the same as saying "this t-value is where we enter the AABB"
+    // which is the same as saying "this t-value is where we enter the brick"
     float tEnter = max(max(tNear.x, tNear.y), tNear.z);
 
     // This is the closest t-value for which the ray leaves any slab,
-    // which is the same as saying "this t-value is where we exit the AABB"
+    // which is the same as saying "this t-value is where we exit the brick"
     float tExit = min(min(tFar.x, tFar.y), tFar.z);
 
     // Only record entry hits (a ray starting inside the box doesn't report a hit)
