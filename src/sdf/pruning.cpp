@@ -5,6 +5,7 @@
 #include "vk/pipeline.h"
 #include <cstdio>
 #include <iostream>
+#include <utility>
 
 //referenced from gpuscene.cpp
 bool SdfPruning::init(VulkanContext& context, const Scene& scene){
@@ -16,19 +17,144 @@ bool SdfPruning::init(VulkanContext& context, const Scene& scene){
     m_aabbMax = scene.paddedAABBmax;
 
     if(!createInputBuffers(scene)){
-        fprintf(stderr, "SdfPruning: failed to create input buffers\n");
+        fprintf(stderr, "SdfPruning: createInputBuffers failed\n");
         return false;
     }
     if(!createWorkBuffers()){
-        fprintf(stderr, "SdfPruning: failed to create work buffers\n");
+        fprintf(stderr, "SdfPruning: createWorkBuffers failed\n");
         return false;
     }
     if(!createCullingPipeline()){
-        fprintf(stderr, "SdfPruning: failed to create culling pipeline\n");
+        fprintf(stderr, "SdfPruning: createCullingPipeline failed\n");
+        return false;
+    }
+
+    if(!runPruning()){
+        fprintf(stderr, "SdfPruning: runPruning failed\n");
         return false;
     }
 
     return true;
+}
+
+//from gpuscene.cpp, made local for convenience
+void SdfPruning::recordMemoryBarrier(
+    VkCommandBuffer commandBuffer,
+    VkPipelineStageFlags2 srcStage,
+    VkAccessFlags2 srcAccess,
+    VkPipelineStageFlags2 dstStage,
+    VkAccessFlags2 dstAccess)
+{
+    VkMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    barrier.srcStageMask = srcStage;
+    barrier.srcAccessMask = srcAccess;
+    barrier.dstStageMask = dstStage;
+    barrier.dstAccessMask = dstAccess;
+
+    VkDependencyInfo dependencyInfo{};
+    dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependencyInfo.memoryBarrierCount = 1;
+    dependencyInfo.pMemoryBarriers = &barrier;
+
+    vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+}
+
+bool SdfPruning::runPruning(){
+    VkCommandBuffer cmd = m_context->beginSingleTimeCommands();
+    
+    m_inputIdx = 0;
+    m_outputIdx = 1;
+
+    VkBufferCopy region = {
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = m_nodeCount * sizeof(uint16_t)
+    };
+    vkCmdCopyBuffer(cmd, m_parentsInit.bufferHandle, m_parents[m_inputIdx].bufferHandle, 1, &region);
+    vkCmdCopyBuffer(cmd, m_activeNodesInit.bufferHandle, m_activeNodes[m_inputIdx].bufferHandle, 1, &region);
+    vkCmdFillBuffer(cmd, m_activeCount.bufferHandle, 0, numLevelSlots * sizeof(int32_t), 0);
+    vkCmdFillBuffer(cmd, m_oldToNewCount.bufferHandle, 0, numLevelSlots * sizeof(int32_t), 0);
+
+    recordMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT  | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pruningPipeline);
+
+    setStaticPushConstants();
+
+    //4^3 -> 16^3 -> 64^3 -> 256^3
+    bool firstLvl = true;
+    for(int lvl = 2; lvl <= finalGridLvl; lvl += 2){
+        setLevelPushConstants(lvl, firstLvl);
+        vkCmdPushConstants(cmd, m_pruningLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PruningPushConstants), &m_pushConstants);
+        
+        //4x4x4 workgroup
+        uint32_t groups = (uint32_t)((m_pushConstants.grid_size + 3)/4);
+        vkCmdDispatch(cmd, groups, groups, groups);
+        
+        //next level reads current level's output - everything in the src stage that did src access (transfer writes) must finish and be made visible before anything in the dst stage does dst access
+        recordMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+
+        firstLvl = false;
+        
+        if(lvl!=finalGridLvl){ //store final 256^3 result in output slot
+            std::swap(m_inputIdx,m_outputIdx); 
+        }
+    }
+
+    m_context->endSingleTimeCommands(cmd);
+
+    return true;
+} 
+
+void SdfPruning::setStaticPushConstants(){
+    //static push constants
+    m_pushConstants = {};
+
+    m_pushConstants.aabb_min = glm::vec4(m_aabbMin, 0.0f);
+    m_pushConstants.aabb_max = glm::vec4(m_aabbMax, 0.0f);
+    m_pushConstants.num_nodes = m_nodeCount;
+
+    //input buffer data
+    m_pushConstants.prims_ref = m_prims.deviceAddress;
+    m_pushConstants.binary_ops_ref = m_binaryOps.deviceAddress;
+    m_pushConstants.nodes_ref = m_nodes.deviceAddress;
+
+    //scratch
+    m_pushConstants.tmp_ref = m_tmp.deviceAddress;
+    m_pushConstants.old_to_new_scratch_ref = m_oldToNewScratch.deviceAddress;
+
+    //lipschitz defaults
+    m_pushConstants.max_rel_err = 1.0f;
+    m_pushConstants.alpha = 1.0f;
+    m_pushConstants.culling_enabled = 1;
+
+    //rendering only, not needed for culling, placeholders for size
+    m_pushConstants.mvp_ref = 0;
+    m_pushConstants.cam_ref = 0;
+    m_pushConstants.resolution = glm::ivec2(0);
+}
+
+
+void SdfPruning::setLevelPushConstants(int lvl, bool firstLvl){
+    //level push constants (constants that change per level or pingpong swap)
+    m_pushConstants.grid_size = 1 << lvl;
+    m_pushConstants.first_lvl = firstLvl? 1: 0;
+
+    m_pushConstants.active_nodes_in_ref = m_activeNodes[m_inputIdx].deviceAddress;
+    m_pushConstants.active_nodes_out_ref = m_activeNodes[m_outputIdx].deviceAddress;
+    m_pushConstants.parents_in_ref = m_parents[m_inputIdx].deviceAddress;
+    m_pushConstants.parents_out_ref = m_parents[m_outputIdx].deviceAddress;
+    m_pushConstants.cell_offsets_in_ref = m_cellOffsets[m_inputIdx].deviceAddress;
+    m_pushConstants.cell_offsets_out_ref = m_cellOffsets[m_outputIdx].deviceAddress;
+    m_pushConstants.num_active_in_ref = m_numActive[m_inputIdx].deviceAddress;
+    m_pushConstants.num_active_out_ref = m_numActive[m_outputIdx].deviceAddress;
+    m_pushConstants.cell_error_in_ref = m_cellErrors[m_inputIdx].deviceAddress;
+    m_pushConstants.cell_error_out_ref = m_cellErrors[m_outputIdx].deviceAddress;
+
+    //atomic bump allocator (next free index where threads claim space from) - every level writes a resh output list starting at index 0
+    m_pushConstants.active_count_ref = m_activeCount.deviceAddress + lvl*sizeof(int32_t);
+    m_pushConstants.old_to_new_count_ref = m_oldToNewCount.deviceAddress + lvl*sizeof(int32_t);
 }
 
 void SdfPruning::destroy(){
