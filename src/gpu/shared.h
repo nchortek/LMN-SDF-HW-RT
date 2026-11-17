@@ -39,6 +39,9 @@ GPU_NAMESPACE_END
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_buffer_reference : require
 
+// Enable 8-bit storage, so shaders can read int8 values from buffers
+#extension GL_EXT_shader_8bit_storage : require
+
 #define GPU_NAMESPACE_BEGIN
 #define GPU_NAMESPACE_END
 #define GPU_CONST const

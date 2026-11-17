@@ -4,15 +4,18 @@
 
 #include "gpu/shared.h"
 #include "common.glsl"
+#include "sdf_voxel.glsl"
 
-// This shader handles intersections with SDF bricks,
-// reporting where the ray enters the brick's 3D space
-// (not the tight bounding box)
+// This shader handles intersections with SDF bricks via DDA,
+// currently reporting hits against voxel AABBs
 
 layout(push_constant, scalar) uniform PushConstantBlock
 {
     PushConstants pc;
 };
+
+const int kMaxVoxelsVisited = 1 + 3 * (int(BRICK_VOXELS) - 1);
+const float kDDAMiss = 1e30;
 
 // Copied over from pruning/common.glsl
 // 
@@ -76,24 +79,104 @@ void main()
     // which is the same as saying "this t-value is where we exit the brick"
     float tExit = min(min(tFar.x, tFar.y), tFar.z);
 
-    // Only record entry hits (a ray starting inside the box doesn't report a hit)
-    if (tEnter > tExit
-        || tEnter < gl_RayTminEXT
-        || tEnter > gl_RayTmaxEXT)
+    // Clamp the ray to be inside the brick and within [tMin, tMax]
+    // 
+    // Fun fact: gl_RayTmaxEXT starts with the value specified by traceRayEXT,
+    // but is updated to be min(hitT, gl_RayTmaxEXT) whenever a valid hit is
+    // reported for a given ray
+    float tStart = max(tEnter, gl_RayTminEXT);
+    float tEnd = min(tExit, gl_RayTmaxEXT);
+
+    if (tStart > tEnd)
     {
         return;
     }
 
     // The ray enters through the slab whose near plane it crosses last
-    // (axis == 0 for x, 1 for y, and 2 for z)
-    uint axis = (tNear.x > tNear.y)
+    // (entryAxis == 0 for x, 1 for y, and 2 for z)
+    uint entryAxis = (tNear.x > tNear.y)
         ? ((tNear.x > tNear.z) ? 0u : 2u)
         : ((tNear.y > tNear.z) ? 1u : 2u);
 
-    // A ray moving along the positive axis direction enters through the min face.
-    // This allows us to set the hit kind to the entered face:
-    // 0: +x, 1: -x, 2: +y, 3: -y, 4: +z, 5: -z.
-    uint face = (2u * axis) + ((gl_ObjectRayDirectionEXT[axis] > 0.0) ? 1u : 0u);
+    // Compute the ray position and direction in a brick-local space spanning 
+    // [0, BRICK_VOXELS] in each axis
+    vec3 brickLocalRayDir = gl_ObjectRayDirectionEXT / sdfAddresses.voxelSize;
+    vec3 brickLocalRayPos = gl_ObjectRayOriginEXT + tStart * gl_ObjectRayDirectionEXT;
+    brickLocalRayPos -= brickMin;
+    brickLocalRayPos /= sdfAddresses.voxelSize;
 
-    reportIntersectionEXT(tEnter, face);
+    // Compute the voxel index in brick-local space (integer coords in [0, BRICK_VOXELS - 1])
+    ivec3 localVoxelIdx = clamp(
+        ivec3(floor(brickLocalRayPos)),
+        0,
+        int(BRICK_VOXELS) - 1);
+
+    // Convert the ray direction into index space (integer coords in [-1, 0, 1])
+    ivec3 gridStepDir = ivec3(sign(brickLocalRayDir));
+
+    // Compute the brick-local coordinates that describe where the ray
+    // will next cross a voxel boundary along each axis
+    vec3 nextLocalVoxelBoundary = vec3(localVoxelIdx + max(gridStepDir, 0));
+
+    // Solve for the t value at which the ray crosses the next voxel boundary along each axis
+    vec3 tNext = vec3(tStart) + ((nextLocalVoxelBoundary - brickLocalRayPos) / brickLocalRayDir);
+
+    // For ray components with no movement, replace the garbage t value with our DDAMiss sentinel
+    tNext = mix(tNext, vec3(kDDAMiss), equal(gridStepDir, ivec3(0)));
+
+    // Compute the t value needed to traverse one full voxel along each axis
+    vec3 tDelta = abs(1.0 / brickLocalRayDir);
+
+    float tVoxelEnter = tStart;
+
+    for (int i = 0; i < kMaxVoxelsVisited; i++)
+    {
+        float voxelSamples[8] = getVoxelSamples(
+            sdfAddresses.samplesAddr,
+            uint(gl_PrimitiveID),
+            uvec3(localVoxelIdx),
+            sdfAddresses.band);
+
+        float minVoxelSample = voxelSamples[0];
+        for (int j = 1; j < 8; j++)
+        {
+            minVoxelSample = min(minVoxelSample, voxelSamples[j]);
+        }
+
+        // A voxel with a sample inside (or on) the surface is a hit
+        if (minVoxelSample <= 0.0)
+        {
+            // A ray moving along the positive axis direction enters through the min face.
+            // This allows us to set the hit kind to the entered face:
+            // 0: +x, 1: -x, 2: +y, 3: -y, 4: +z, 5: -z
+            uint face = (2u * entryAxis) + ((gl_ObjectRayDirectionEXT[entryAxis] > 0.0) ? 1u : 0u);
+            reportIntersectionEXT(tVoxelEnter, face);
+            return;
+        }
+
+        // If the next voxel is out of range, return without reporting a hit
+        float tVoxelExit = min(min(tNext.x, tNext.y), tNext.z);
+        if (tVoxelExit >= tEnd)
+        {
+            return;
+        }
+
+        // Step into the neighboring voxel across the nearest voxel boundary
+        uint crossingAxis = (tNext.x < tNext.y)
+            ? ((tNext.x < tNext.z) ? 0u : 2u)
+            : ((tNext.y < tNext.z) ? 1u : 2u);
+
+        localVoxelIdx[crossingAxis] += gridStepDir[crossingAxis];
+
+        // Return without reporting a hit if we leave the brick
+        if (localVoxelIdx[crossingAxis] < 0
+            || localVoxelIdx[crossingAxis] >= int(BRICK_VOXELS))
+        {
+            return;
+        }
+
+        tVoxelEnter = tNext[crossingAxis];
+        tNext[crossingAxis] += tDelta[crossingAxis];
+        entryAxis = crossingAxis;
+    }
 }

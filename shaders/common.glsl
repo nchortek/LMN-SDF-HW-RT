@@ -46,6 +46,11 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer Mor
     uint mortons[];
 };
 
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer SampleBuffer
+{
+    int8_t samples[];
+};
+
 // Constants/Sentinels
 const float kMiss = -1.0;
 const float kTMin = 0.001;
