@@ -252,6 +252,7 @@ if(shader_entry_points)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/sampleWarping.glsl)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/rng.glsl)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/bsdf.glsl)
+    list(APPEND shader_sources ${SHADER_SRC_DIR}/sdf_voxel.glsl)
 
     add_custom_target(shaders DEPENDS ${spv_outputs} SOURCES ${shader_sources})
     add_dependencies(${CMAKE_PROJECT_NAME} shaders)
