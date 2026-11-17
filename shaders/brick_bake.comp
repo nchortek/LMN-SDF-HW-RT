@@ -1,0 +1,152 @@
+#version 460 core
+#include "common.glsl"
+#include "gpu/sdf_shared.h"
+#include "gpu/pruning_constants.h"
+#include "pruning/extensions.glsl"
+#include "pruning/common.glsl"
+
+// Thread block dimensions (# of threads per work group)
+// Each brick is 729 samples, so ~12 samples per thread
+
+// TODO- test other vals here for performance! Try 128 or 256 too
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, scalar, buffer_reference_align = 4) buffer AabbOutRef  {
+    Aabb aabbs[];
+};
+
+// For mortons and samples 
+layout(buffer_reference, scalar, buffer_reference_align = 4) buffer UintArrayOutRef  {
+    uint tab[];
+};
+
+// For single values
+layout(buffer_reference, scalar, buffer_reference_align = 4) buffer UintOutRef {
+    uint val;
+};
+
+layout(push_constant, scalar) uniform BakePushConstantBlock {
+    BakePushConstants pc;
+};
+
+#define BAKE_STUB 1
+
+// PLACEHOLDER until Luke finishes milestone 2 
+#ifdef BAKE_STUB
+const vec3 SPHERE_CENTER = vec3(0.f, 5.f, 0.f);
+const float SPHERE_RADIUS = 5.f;
+float sdf_active(vec3 p, int cell_idx, out bool near_field) {
+    near_field = true;
+    return length(p - SPHERE_CENTER) - SPHERE_RADIUS;
+}
+#endif
+
+#ifndef BAKE_STUB
+#include "eval.glsl"
+#endif
+
+shared float s_dists[BRICK_SAMPLES]; // Each SDF sampled dist in this brick
+shared uint s_min_abs; // smallest abs dist value. If no samples touch SDF surface, skip brick
+shared uint s_slot; // dense index (after skipping empty bricks). 0xffffffffu means skip
+
+void main() {
+    // Dereference values from Sdf Scene Adresses Buffer
+    SdfSceneAddresses sdf = SdfSceneAddressesBuffer(pc.sdfSceneAddr).sdfDeviceAddresses;
+    AabbOutRef out_aabbs = AabbOutRef(sdf.aabbsAddr);
+    UintArrayOutRef out_mortons = UintArrayOutRef(sdf.mortonsAddr);
+    UintArrayOutRef out_samples = UintArrayOutRef(sdf.samplesAddr);
+    UintOutRef out_brick_count = UintOutRef(sdf.brickCountAddr);
+
+    ivec3 brick = ivec3(gl_WorkGroupID); // Work group idx
+    uint brick_idx = morton_encode(brick); // 3D idx -> 1D idx (spatially ordered w/ morton)
+
+#ifndef BAKE_STUB
+    // If there are zero CSG nodes in this brick then skip this ENTIRE work group!
+    if (brick_cells_num_active.tab[brick_idx] == 0) {
+        return;
+    }
+#endif
+
+    // Init min on first thread of each group
+    if (gl_LocalInvocationIndex == 0) {
+        s_min_abs = floatBitsToUint(1e30);
+    }
+
+    barrier(); // Sync all threads!
+
+    // Evaluate all 9^3 samples in this block!
+    // TODO: Optimize here?
+    for (uint s = gl_LocalInvocationIndex; s < BRICK_SAMPLES; s+=gl_WorkGroupSize.x) {
+        // 1D idx (0-728) -> 3D idx (vec3(0-8))
+        ivec3 brickspace_pos = ivec3(s % 9, (s / 9) % 9, s / 81);
+        ivec3 voxelspace_pos = brick * int(BRICK_VOXELS) + brickspace_pos;
+
+        // Get SDF sample position in worldspace  
+        vec3 world_pos = sdf.domainMin + voxelspace_pos * sdf.voxelSize;
+
+        // Find which pruning cell this sample is in
+        // Pruning tree lives at 256^3. Samples are at 512^3. 
+        ivec3 prunespace_pos = min(voxelspace_pos >> 1, ivec3(255)); 
+        int prune_idx = int(get_cell_idx(prunespace_pos, int(PRUNING_CELLS_PER_SCENE_AXIS)));
+
+        // Sample SDF!
+        bool near_field;
+        float d = sdf_active(world_pos, prune_idx, near_field);
+
+        // Record
+        s_dists[s] = d;
+        atomicMin(s_min_abs, floatBitsToUint(abs(d)));
+    }
+    barrier(); // Sync all threads!
+
+    // Decide if we keep this brick
+    if (gl_LocalInvocationIndex == 0) {
+        s_slot = 0xffffffffu; 
+        
+        // If all SDF samples are > (voxel_diag / 2), 
+        // then we guarantee that the SDF surface doesn't lie within this brick!
+        // (because we take the absolute value of the distance, can't check sign)
+        float voxel_diag = sqrt(3.f) * sdf.voxelSize;
+
+        if (uintBitsToFloat(s_min_abs) < 0.5 * voxel_diag) {
+            // Get dense index (remove empty spots)
+            uint slot = uint(atomicAdd(out_brick_count.val, 1));
+            if (slot < MAX_BRICKS) {
+                s_slot = slot;
+            }
+        }
+    }
+    barrier(); // Sync all threads!
+    
+    uint slot = s_slot; // share val w/ all threads
+
+    // Exit each thread if brick is empty
+    if (slot == 0xffffffffu) {
+        return;
+    }
+
+    // Quantize to 4 samples per word
+    for (uint w = gl_LocalInvocationIndex; w < BRICK_STRIDE_WORDS; w += gl_WorkGroupSize.x) {
+        vec4 d = vec4(0.f);
+        for (uint k = 0; k < 4; k++) {
+            uint s = w * 4 + k;
+            if (s < BRICK_SAMPLES) {
+                d[k] = s_dists[s] / sdf.band;
+            }
+        }
+
+        // Record quantized dist to samples buffer
+        out_samples.tab[slot * BRICK_STRIDE_WORDS + w] = packSnorm4x8(d);
+    }
+
+    if (gl_LocalInvocationIndex == 0) {
+        // Record dense brick index
+        out_mortons.tab[slot] = brick_idx;
+
+        // Record AABB of brick
+        vec3 lo = sdf.domainMin + vec3(brick) * int(BRICK_VOXELS) * sdf.voxelSize;
+        vec3 hi = lo + int(BRICK_VOXELS) * sdf.voxelSize;
+        out_aabbs.aabbs[slot] = Aabb(lo, hi);
+    }
+
+}

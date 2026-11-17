@@ -204,6 +204,7 @@ set(shader_entry_points
     sdf_brick.rint
     sdf.rchit
     pruning/culling.comp
+    brick_bake.comp
 )
 
 if(shader_entry_points)

@@ -141,7 +141,7 @@ private:
     vkutil::Buffer m_activeNodes[2]{};
     vkutil::Buffer m_parents[2]{};
 
-    //scartch
+    //scratch
     vkutil::Buffer m_tmp{};
     vkutil::Buffer m_oldToNewScratch{};
 

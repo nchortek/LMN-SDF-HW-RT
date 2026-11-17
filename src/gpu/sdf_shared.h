@@ -20,12 +20,56 @@ GPU_CONST uint BRICK_SAMPLES = 729;
 // data from more than one brick.
 GPU_CONST uint BRICK_STRIDE_WORDS = 184;
 
+// How many voxels span the scene bbox per axis
+GPU_CONST uint VOXELS_PER_SCENE_AXIS = 512;
+
+// How many pruning cells span the scene bbox per axis 
+GPU_CONST uint PRUNING_CELLS_PER_SCENE_AXIS = 256;
+
+
+
 // One brick's axis-aligned bounding box in world space.
 // This must match VkAabbPositionsKHR.
 struct Aabb
 {
     vec3 minValues;
     vec3 maxValues;
+};
+
+struct BrickBakeParams
+{
+    // Pruning inputs (device addresses)
+
+    // Starting address of our buffer of SDF primitives
+    uint64_t primsAddr;
+
+    // Starting address of our buffer of binary SDF operators
+    uint64_t binaryOpsAddr;
+
+    // Starting address of our buffer of flattened CSG tree nodes
+    uint64_t nodesAddr;
+
+    // Starting address of our buffer of surviving node indices
+    uint64_t activeNodesAddr;
+
+    // Per pruning cell: start index of its slice in the active node pool
+    uint64_t cellOffsetsAddr;
+
+    // Per pruning cell: length of its slice in the active node pool
+    uint64_t cellNumActiveAddr;
+
+    // Per pruning cell: error bound from pruning
+    uint64_t cellErrorsAddr;
+
+    // Per brick cell: active node count. Used to skip empty bricks
+    uint64_t brickCellsNumActiveAddr;
+
+    // Maximum number of bricks
+    int maxBricks;
+
+    // Total number of nodes in CSG tree
+    int totalNumNodes;
+    
 };
 
 // Device buffer addresses for the SDF brick buffers
@@ -43,6 +87,9 @@ struct SdfSceneAddresses
     // Address of a single uint holding the number of non-empty bricks
     uint64_t brickCountAddr;
 
+    // Brick baking input params buffer
+    uint64_t brickBakeParamsAddr;
+
     // World-space minimum corner of the cubic domain the bricks cover
     vec3 domainMin;
 
@@ -54,11 +101,24 @@ struct SdfSceneAddresses
     float band;
 };
 
+struct BakePushConstants
+{
+    // The device buffer address point to our single instance
+    // of the SdfSceneAddresses struct.
+    uint64_t sdfSceneAddr;
+};
+
+
 GPU_NAMESPACE_END
 
 #ifdef __cplusplus
+
 static_assert(sizeof(gpu::Aabb) == 24, "Our Aabb struct must match the size of VkAabbPositionsKHR.");
 static_assert(gpu::BRICK_STRIDE_WORDS * 4 >= gpu::BRICK_SAMPLES, "Each brick's samples must fit within its word count.");
+static_assert(sizeof(gpu::BrickBakeParams) == 8*8 + 2*4, "Size of BrickBakeParams must match expected value.");
+static_assert(sizeof(gpu::SdfSceneAddresses) == 5*8 + 12 + 2*4, "Size of SdfSceneAddresses must match expected value.");
+static_assert(sizeof(gpu::BakePushConstants) == 8, "Size of BakePushConstants must match expected value.");
+
 #endif
 
 #endif // GPU_SDF_SHARED_H
