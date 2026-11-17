@@ -1,11 +1,43 @@
 #ifndef SDF_VOXEL_GLSL
 #define SDF_VOXEL_GLSL
 
+// The SDF intersection shader passes this (alongside a t-value)
+// to the SDF closest hit shader
+//
+// The Vulkan spec only guarantees this to be 32 bytes.
+// If we surpass that we'll need to query it via:
+// VkPhysicalDeviceRayTracingPipelinePropertiesKHR::maxRayHitAttributeSize
+struct SdfHitAttributes
+{
+    // The given voxel's integer coordinates within its brick's 8x8x8 grid,
+    // packed into a single uint:  unused|zzz|yyy|xxx
+    // 
+    // Each coordinate only needs three bits because voxel indices range [0, 7]
+    uint packedBrickLocalVoxelIdx;
+
+    // The hit position in voxel-local space (coordinates in range [0, 1])
+    vec3 voxelLocalPos;
+};
+
+uint packBrickLocalVoxelIdx(uvec3 voxelIdx)
+{
+    // Pack each [0, 7] coordinate into 3 bits
+    return voxelIdx.x | (voxelIdx.y << 3) | (voxelIdx.z << 6);
+}
+
+uvec3 unpackBrickLocalVoxelIdx(uint packedVoxelIdx)
+{
+    // 7u is a 3-bit all-set mask
+    return uvec3(packedVoxelIdx & 7u,
+        (packedVoxelIdx >> 3) & 7u,
+        (packedVoxelIdx >> 6) & 7u);
+}
+
 // Returns the 8 dequantized samples that lie on the corners of the given voxel within a brick.
 //
 // globalBrickIdx is the brick's global index
-// localVoxelIdx is the given voxel's integer coordinates within its brick's 8x8x8 grid
-float[8] getVoxelSamples(uint64_t samplesAddr, uint globalBrickIdx, uvec3 localVoxelIdx, float band)
+// brickLocalVoxelIdx is the given voxel's integer coordinates within its brick's 8x8x8 grid
+float[8] getVoxelSamples(uint64_t samplesAddr, uint globalBrickIdx, uvec3 brickLocalVoxelIdx, float band)
 {
     float cornerSamples[8];
     SampleBuffer sampleBuffer = SampleBuffer(samplesAddr);
@@ -25,13 +57,13 @@ float[8] getVoxelSamples(uint64_t samplesAddr, uint globalBrickIdx, uvec3 localV
         {
             for (uint i = 0u; i < 2u; i++)
             {
-                uvec3 localSampleIdx = localVoxelIdx + uvec3(i, j, k);
-                uint flatLocalSampleIdx =
-                    (((localSampleIdx.z * samplesPerAxis) + localSampleIdx.y) * samplesPerAxis)
-                    + localSampleIdx.x;
+                uvec3 brickLocalSampleIdx = brickLocalVoxelIdx + uvec3(i, j, k);
+                uint flatBrickLocalSampleIdx =
+                    (((brickLocalSampleIdx.z * samplesPerAxis) + brickLocalSampleIdx.y) * samplesPerAxis)
+                    + brickLocalSampleIdx.x;
 
                 cornerSamples[i + (2u * j) + (4u * k)] =
-                    float(int(sampleBuffer.samples[brickStartIdx + flatLocalSampleIdx])) * scale;
+                    float(int(sampleBuffer.samples[brickStartIdx + flatBrickLocalSampleIdx])) * scale;
             }
         }
     }

@@ -15,6 +15,9 @@ layout(push_constant, scalar) uniform PushConstantBlock
     PushConstants pc;
 };
 
+// This gets passed to the SDF closest hit shader alongside the t-value of an intersection
+hitAttributeEXT SdfHitAttributes hitAttributes;
+
 const uint kMaxVoxelsVisited = 1u + 3u * (BRICK_VOXELS - 1u);
 const float kDDAMiss = 1e30;
 const float kVoxelLocalRootEpsilon = 4e-3;
@@ -31,6 +34,8 @@ float evalCubic(vec4 c, float t)
 //
 // Note that o must be in voxel-local space ([0, 1] along each axis), and
 // d is expressed in voxels per t
+//
+// Adapted from Soderlund et al 2022, Eqs. 3-7
 vec4 computeCubicCoefficients(float samples[8], vec3 o, vec3 d)
 {
     float a = samples[5] - samples[4];
@@ -84,6 +89,8 @@ vec4 computeCubicCoefficients(float samples[8], vec3 o, vec3 d)
 //
 // The roots are returned in increasing order, with tFar indicating
 // a non-existant root
+//
+// Adapted from Marmitt et al 2004, Alg. 3
 vec2 computeIntervalSplitPoints(vec4 c, float tFar)
 {
     // Calculate the quadratic coefficients
@@ -123,6 +130,8 @@ vec2 computeIntervalSplitPoints(vec4 c, float tFar)
 // to negative (i.e. the first t value for which the ray enters the surface).
 //
 // Returns whether or not a root (and therefore an intersection) was found
+//
+// Adapted from Marmitt et al 2004, Alg. 3
 bool findEnteringRoot(vec4 c, float tFar, float epsilon, out float t)
 {
     vec2 intervalSplitPoints = computeIntervalSplitPoints(c, tFar);
@@ -260,12 +269,6 @@ void main()
         return;
     }
 
-    // The ray enters through the slab whose near plane it crosses last
-    // (entryAxis == 0 for x, 1 for y, and 2 for z)
-    uint entryAxis = (tNear.x > tNear.y)
-        ? ((tNear.x > tNear.z) ? 0u : 2u)
-        : ((tNear.y > tNear.z) ? 1u : 2u);
-
     // Compute the ray position and direction in a brick-local space spanning 
     // [0, BRICK_VOXELS] in each axis
     vec3 brickLocalRayDir = gl_ObjectRayDirectionEXT / sdfAddresses.voxelSize;
@@ -274,7 +277,7 @@ void main()
     brickLocalRayPos /= sdfAddresses.voxelSize;
 
     // Compute the voxel index in brick-local space (integer coords in [0, BRICK_VOXELS - 1])
-    ivec3 localVoxelIdx = clamp(
+    ivec3 brickLocalVoxelIdx = clamp(
         ivec3(floor(brickLocalRayPos)),
         0,
         int(BRICK_VOXELS) - 1);
@@ -284,7 +287,7 @@ void main()
 
     // Compute the brick-local coordinates that describe where the ray
     // will next cross a voxel boundary along each axis
-    vec3 nextLocalVoxelBoundary = vec3(localVoxelIdx + max(gridStepDir, 0));
+    vec3 nextLocalVoxelBoundary = vec3(brickLocalVoxelIdx + max(gridStepDir, 0));
 
     // Solve for the t value at which the ray crosses the next voxel boundary along each axis
     vec3 tNext = vec3(tStart) + ((nextLocalVoxelBoundary - brickLocalRayPos) / brickLocalRayDir);
@@ -304,7 +307,7 @@ void main()
         float voxelSamples[8] = getVoxelSamples(
             sdfAddresses.samplesAddr,
             uint(gl_PrimitiveID),
-            uvec3(localVoxelIdx),
+            uvec3(brickLocalVoxelIdx),
             sdfAddresses.band);
 
         float minVoxelSample = voxelSamples[0];
@@ -318,20 +321,18 @@ void main()
         if (minVoxelSample <= 0.0)
         {
             float tVoxelFar = min(tVoxelExit, tEnd) - tVoxelEnter;
-            vec3 voxelLocalRayPos = brickLocalRayPos
+            vec3 voxelLocalRayEntryPos = brickLocalRayPos
                 + ((tVoxelEnter - tStart) * brickLocalRayDir)
-                - vec3(localVoxelIdx);
-            vec4 c = computeCubicCoefficients(voxelSamples, voxelLocalRayPos, brickLocalRayDir);
+                - vec3(brickLocalVoxelIdx);
+            vec4 c = computeCubicCoefficients(voxelSamples, voxelLocalRayEntryPos, brickLocalRayDir);
             float tIntoVoxel;
 
             if (tVoxelFar > 0.0
                 && findEnteringRoot(c, tVoxelFar, rootEpsilonT, tIntoVoxel))
             {
-                // A ray moving along the positive axis direction enters through the min face.
-                // This allows us to set the hit kind to the entered face:
-                // 0: +x, 1: -x, 2: +y, 3: -y, 4: +z, 5: -z
-                uint face = (2u * entryAxis) + ((gl_ObjectRayDirectionEXT[entryAxis] > 0.0) ? 1u : 0u);
-                reportIntersectionEXT(tVoxelEnter + tIntoVoxel, face);
+                hitAttributes.packedBrickLocalVoxelIdx = packBrickLocalVoxelIdx(uvec3(brickLocalVoxelIdx));
+                hitAttributes.voxelLocalPos = voxelLocalRayEntryPos + (tIntoVoxel * brickLocalRayDir);
+                reportIntersectionEXT(tVoxelEnter + tIntoVoxel, 0u);
                 return;
             }
         }
@@ -347,17 +348,16 @@ void main()
             ? ((tNext.x < tNext.z) ? 0u : 2u)
             : ((tNext.y < tNext.z) ? 1u : 2u);
 
-        localVoxelIdx[crossingAxis] += gridStepDir[crossingAxis];
+        brickLocalVoxelIdx[crossingAxis] += gridStepDir[crossingAxis];
 
         // Return without reporting a hit if we leave the brick
-        if (localVoxelIdx[crossingAxis] < 0
-            || localVoxelIdx[crossingAxis] >= int(BRICK_VOXELS))
+        if (brickLocalVoxelIdx[crossingAxis] < 0
+            || brickLocalVoxelIdx[crossingAxis] >= int(BRICK_VOXELS))
         {
             return;
         }
 
         tVoxelEnter = tNext[crossingAxis];
         tNext[crossingAxis] += tDelta[crossingAxis];
-        entryAxis = crossingAxis;
     }
 }
