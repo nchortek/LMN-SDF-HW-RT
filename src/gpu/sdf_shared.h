@@ -99,6 +99,10 @@ struct SdfSceneAddresses
     // Our band size, used for dequantization:
     // distance = (sample / 127) * band
     float band;
+
+    // Explicit padding at the end (uint64_t members must be 8-byte aligned!)
+    // This padding brings up to 64 bytes, which is a multiple of 8.
+    float _pad0;
 };
 
 struct BakePushConstants
@@ -116,7 +120,7 @@ GPU_NAMESPACE_END
 static_assert(sizeof(gpu::Aabb) == 24, "Our Aabb struct must match the size of VkAabbPositionsKHR.");
 static_assert(gpu::BRICK_STRIDE_WORDS * 4 >= gpu::BRICK_SAMPLES, "Each brick's samples must fit within its word count.");
 static_assert(sizeof(gpu::BrickBakeParams) == 8*8 + 2*4, "Size of BrickBakeParams must match expected value.");
-static_assert(sizeof(gpu::SdfSceneAddresses) == 5*8 + 12 + 2*4, "Size of SdfSceneAddresses must match expected value.");
+static_assert(sizeof(gpu::SdfSceneAddresses) == 5*8 + 12 + 2*4 + 4, "Size of SdfSceneAddresses must match expected value.");
 static_assert(sizeof(gpu::BakePushConstants) == 8, "Size of BakePushConstants must match expected value.");
 
 #endif
