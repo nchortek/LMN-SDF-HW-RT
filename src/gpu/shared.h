@@ -66,6 +66,7 @@ GPU_CONST uint kSpecGlass = 4;
 GPU_CONST uint kFlagDepthOfField = 0x1u;
 GPU_CONST uint kFlagDebugView = 0x2u;
 GPU_CONST uint kFlagDirectLighting = 0x4u;
+GPU_CONST uint kFlagSolidFaceTest = 0x8u;
 
 // Misc.
 GPU_CONST uint kInstanceMaskAllBitsSet = 0xFFu;

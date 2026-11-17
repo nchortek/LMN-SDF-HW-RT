@@ -87,6 +87,18 @@ public:
         }
     }
 
+    void setSolidFaceTest(bool enabled)
+    {
+        if (enabled)
+        {
+            m_pushConstants.flags |= gpu::kFlagSolidFaceTest;
+        }
+        else
+        {
+            m_pushConstants.flags &= ~gpu::kFlagSolidFaceTest;
+        }
+    }
+
     void setMaxTraceDepth(uint32_t maxDepth)
     {
         m_pushConstants.maxDepth = maxDepth;
