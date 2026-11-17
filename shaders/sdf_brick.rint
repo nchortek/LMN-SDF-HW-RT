@@ -132,7 +132,7 @@ vec2 computeIntervalSplitPoints(vec4 c, float tFar)
 // Returns whether or not a root (and therefore an intersection) was found
 //
 // Adapted from Marmitt et al 2004, Alg. 3
-bool findEnteringRoot(vec4 c, float tFar, float epsilon, out float t)
+bool findEnteringRoot(vec4 c, float tFar, float epsilon, bool dontComputeT, out float t)
 {
     vec2 intervalSplitPoints = computeIntervalSplitPoints(c, tFar);
     vec3 subintervalEnds = vec3(intervalSplitPoints, tFar);
@@ -149,8 +149,13 @@ bool findEnteringRoot(vec4 c, float tFar, float epsilon, out float t)
             && g1 < 0.0)
         {
             // Now that we found an interval [t0, t1] that contains an entering root,
-            // we perform repeated linear interpolation to find the exact t
+            // we optionally perform repeated linear interpolation to find the exact t
             t = t0;
+
+            if (dontComputeT)
+            {
+                return true;
+            }
 
             for (uint j = 0u; j < kMaxRootInterpolationSteps; j++)
             {
@@ -298,6 +303,7 @@ void main()
     // Compute the t value needed to traverse one full voxel along each axis
     vec3 tDelta = abs(1.0 / brickLocalRayDir);
 
+    bool isShadowRay = (gl_IncomingRayFlagsEXT & gl_RayFlagsTerminateOnFirstHitEXT) != 0u;
     float rootEpsilonT = kVoxelLocalRootEpsilon / length(brickLocalRayDir);
     float tVoxelEnter = tStart;
 
@@ -328,7 +334,7 @@ void main()
             float tIntoVoxel;
 
             if (tVoxelFar > 0.0
-                && findEnteringRoot(c, tVoxelFar, rootEpsilonT, tIntoVoxel))
+                && findEnteringRoot(c, tVoxelFar, rootEpsilonT, isShadowRay, tIntoVoxel))
             {
                 hitAttributes.packedBrickLocalVoxelIdx = packBrickLocalVoxelIdx(uvec3(brickLocalVoxelIdx));
                 hitAttributes.voxelLocalPos = voxelLocalRayEntryPos + (tIntoVoxel * brickLocalRayDir);
