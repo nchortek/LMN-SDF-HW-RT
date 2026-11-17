@@ -303,6 +303,7 @@ void main()
     // Compute the t value needed to traverse one full voxel along each axis
     vec3 tDelta = abs(1.0 / brickLocalRayDir);
 
+    bool rayWasOutsideSurface = (tEnter >= gl_RayTminEXT);
     bool isShadowRay = (gl_IncomingRayFlagsEXT & gl_RayFlagsTerminateOnFirstHitEXT) != 0u;
     float rootEpsilonT = kVoxelLocalRootEpsilon / length(brickLocalRayDir);
     float tVoxelEnter = tStart;
@@ -326,21 +327,50 @@ void main()
         // be intersection tested
         if (minVoxelSample <= 0.0)
         {
-            float tVoxelFar = min(tVoxelExit, tEnd) - tVoxelEnter;
+            // Calculate the units of t the ray must traverse to move from
+            // the point where it enters a voxel to the point where it exits
+            // the voxel (or the ray's maximum t value if that is closer)
+            float tToVoxelExit = min(tVoxelExit, tEnd) - tVoxelEnter;
+
             vec3 voxelLocalRayEntryPos = brickLocalRayPos
                 + ((tVoxelEnter - tStart) * brickLocalRayDir)
                 - vec3(brickLocalVoxelIdx);
             vec4 c = computeCubicCoefficients(voxelSamples, voxelLocalRayEntryPos, brickLocalRayDir);
             float tIntoVoxel;
 
-            if (tVoxelFar > 0.0
-                && findEnteringRoot(c, tVoxelFar, rootEpsilonT, isShadowRay, tIntoVoxel))
+            // If the ray was outside the surface just before entering this voxel, but is
+            // inside the surface at the point where it enters, then the ray crossed the
+            // surface exactly at the shared voxel face, and we report a hit there.
+            //
+            // This requires special handling, because our root-search intersection
+            // test can miss such intersections due to floating point imprecision.
+            //
+            // c.x is the cubic evaluated at t = 0, which equals Soderlund et al. 2022, Eq. 1 
+            // (the trilinearly interpolated f) at the voxel entry point.
+            //
+            // Adapted from Soderlund et al. 2022, Section 2
+            if (rayWasOutsideSurface && c.x < 0.0)
+            {
+                hitAttributes.packedBrickLocalVoxelIdx = packBrickLocalVoxelIdx(uvec3(brickLocalVoxelIdx));
+                hitAttributes.voxelLocalPos = voxelLocalRayEntryPos;
+                reportIntersectionEXT(tVoxelEnter, 0u);
+                return;
+            }
+
+            if (tToVoxelExit > 0.0
+                && findEnteringRoot(c, tToVoxelExit, rootEpsilonT, isShadowRay, tIntoVoxel))
             {
                 hitAttributes.packedBrickLocalVoxelIdx = packBrickLocalVoxelIdx(uvec3(brickLocalVoxelIdx));
                 hitAttributes.voxelLocalPos = voxelLocalRayEntryPos + (tIntoVoxel * brickLocalRayDir);
                 reportIntersectionEXT(tVoxelEnter + tIntoVoxel, 0u);
                 return;
             }
+            
+            rayWasOutsideSurface = (evalCubic(c, max(tToVoxelExit, 0.0)) >= 0.0);
+        }
+        else
+        {
+            rayWasOutsideSurface = true;
         }
 
         // If the next voxel is out of range, return without reporting a hit
