@@ -6,16 +6,184 @@
 #include "common.glsl"
 #include "sdf_voxel.glsl"
 
-// This shader handles intersections with SDF bricks via DDA,
-// currently reporting hits against voxel AABBs
+// This shader handles intersections with SDF bricks via DDA, traversing the
+// voxels of a given brick and checking for hits by trilinearly interpolating
+// each voxel's 8 corner samples via the methods described in Soderlund et al 2022
 
 layout(push_constant, scalar) uniform PushConstantBlock
 {
     PushConstants pc;
 };
 
-const int kMaxVoxelsVisited = 1 + 3 * (int(BRICK_VOXELS) - 1);
+const uint kMaxVoxelsVisited = 1u + 3u * (BRICK_VOXELS - 1u);
 const float kDDAMiss = 1e30;
+const float kVoxelLocalRootEpsilon = 4e-3;
+const int kMaxRootInterpolationSteps = 50;
+
+// Evaluate the cubic polynomical with coefficents c at value t
+float evalCubic(vec4 c, float t)
+{
+    return (((((c.w * t) + c.z) * t) + c.y) * t) + c.x;
+}
+
+// Given a voxel's samples, the ray origin, and the ray direction,
+// compute the coefficients for the cubic polynomial from Soderlund et al 2022
+//
+// Note that o must be in voxel-local space ([0, 1] along each axis), and
+// d is expressed in voxels per t
+vec4 computeCubicCoefficients(float samples[8], vec3 o, vec3 d)
+{
+    float a = samples[5] - samples[4];
+
+    float k0 = samples[0];
+    float k1 = samples[1] - samples[0];
+    float k2 = samples[2] - samples[0];
+    float k3 = samples[3] - samples[2] - k1;
+    float k4 = k0 - samples[4];
+    float k5 = k1 - a;
+    float k6 = k2 - (samples[6] - samples[4]);
+    float k7 = k3 - (samples[7] - samples[6] - a);
+
+    float m0 = o.x * o.y;
+    float m1 = d.x * d.y;
+    float m2 = (o.x * d.y) + (o.y * d.x);
+    float m3 = (k5 * o.z) - k1;
+    float m4 = (k6 * o.z) - k2;
+    float m5 = (k7 * o.z) - k3;
+
+    float c0 = ((k4 * o.z) - k0)
+        + (o.x * m3)
+        + (o.y * m4)
+        + (m0 * m5);
+
+    float c1 = (d.x * m3)
+        + (d.y * m4)
+        + (m2 * m5)
+        + (d.z
+            * (k4
+                + (k5 * o.x)
+                + (k6 * o.y)
+                + (k7 * m0)));
+
+    float c2 = (m1 * m5)
+        + (d.z
+            * ((k5 * d.x)
+                + (k6 * d.y)
+                + (k7 * m2)));
+
+    float c3 = k7 * m1 * d.z;
+
+    // Negate the coefficients before returning so a negative value
+    // marks the interior of the SDF
+    return -vec4(c0, c1, c2, c3);
+}
+
+// Given the coefficients of a cubic polynomial, return the t values
+// in the exclusive range (0, tFar) corresponding to the roots of its quadratic
+// derivative.
+//
+// The roots are returned in increasing order, with tFar indicating
+// a non-existant root
+vec2 computeIntervalSplitPoints(vec4 c, float tFar)
+{
+    // Calculate the quadratic coefficients
+    vec3 q = vec3(c.y, 2.0 * c.z, 3.0 * c.w);
+    vec2 roots = vec2(tFar);
+
+    if (q.z == 0.0
+        && q.y != 0.0)
+    {
+        // If the derivative is actually linear we can solve directly for
+        // its single root
+        roots.x = -q.x / q.y;
+    }
+    else
+    {
+        // The derivative is indeed a quadratic equation, so safely compute its roots
+        // https://stackoverflow.com/questions/48979861/numerically-stable-method-for-solving-quadratic-equations
+        float discriminant = (q.y * q.y) - (4.0 * q.z * q.x);
+        if (discriminant > 0.0)
+        {
+            float copySign = (q.y >= 0.0) ? 1.0 : -1.0;
+            float tmp = -0.5 * (q.y + (copySign * sqrt(discriminant)));
+            roots = vec2(tmp / q.z, q.x / tmp);
+        }
+    }
+
+    // Discard roots outside the exclusive (0, tFar) range
+    roots = mix(roots, vec2(tFar), lessThanEqual(roots, vec2(0.0)));
+    roots = min(roots, vec2(tFar));
+
+    // Return the split points in increasing order
+    return vec2(min(roots.x, roots.y), max(roots.x, roots.y));
+}
+
+// Given the coefficients of a cubic polynomial, find the first root in the
+// range of [0, tFar] for which the polynomial transitions from non-negative
+// to negative (i.e. the first t value for which the ray enters the surface).
+//
+// Returns whether or not a root (and therefore an intersection) was found
+bool findEnteringRoot(vec4 c, float tFar, float epsilon, out float t)
+{
+    vec2 intervalSplitPoints = computeIntervalSplitPoints(c, tFar);
+    vec3 subintervalEnds = vec3(intervalSplitPoints, tFar);
+
+    float t0 = 0.0;
+    float g0 = c.x;
+
+    for (uint i = 0u; i < 3u; i++)
+    {
+        float t1 = subintervalEnds[i];
+        float g1 = evalCubic(c, t1);
+
+        if (g0 >= 0.0
+            && g1 < 0.0)
+        {
+            // Now that we found an interval [t0, t1] that contains an entering root,
+            // we perform repeated linear interpolation to find the exact t
+            t = t0;
+
+            for (uint j = 0u; j < kMaxRootInterpolationSteps; j++)
+            {
+                float tPrev = t;
+
+                // Lerp between t0 and t1 with a blend factor equal to the fraction of
+                // the interval marking where the line through (t0, g0) and (t1, g1)
+                // crosses zero
+                t = mix(t0, t1, g0 / (g0 - g1));
+
+                // t now holds our current "best assessment" of the intersection point.
+                // We can now evaluate our cubic polynomial at that point in order to
+                // narrow our interval
+                float newG = evalCubic(c, t);
+
+                if (newG >= 0.0)
+                {
+                    t0 = t;
+                    g0 = newG;
+                }
+                else
+                {
+                    t1 = t;
+                    g1 = newG;
+                }
+
+                if (abs(t - tPrev) < epsilon)
+                {
+                    break;
+                }
+            }
+
+            return true;
+        }
+
+        t0 = t1;
+        g0 = g1;
+    }
+
+    t = tFar;
+    return false;
+}
 
 // Copied over from pruning/common.glsl
 // 
@@ -127,10 +295,12 @@ void main()
     // Compute the t value needed to traverse one full voxel along each axis
     vec3 tDelta = abs(1.0 / brickLocalRayDir);
 
+    float rootEpsilonT = kVoxelLocalRootEpsilon / length(brickLocalRayDir);
     float tVoxelEnter = tStart;
 
-    for (int i = 0; i < kMaxVoxelsVisited; i++)
+    for (uint i = 0u; i < kMaxVoxelsVisited; i++)
     {
+        float tVoxelExit = min(min(tNext.x, tNext.y), tNext.z);
         float voxelSamples[8] = getVoxelSamples(
             sdfAddresses.samplesAddr,
             uint(gl_PrimitiveID),
@@ -138,24 +308,35 @@ void main()
             sdfAddresses.band);
 
         float minVoxelSample = voxelSamples[0];
-        for (int j = 1; j < 8; j++)
+        for (uint j = 1u; j < 8u; j++)
         {
             minVoxelSample = min(minVoxelSample, voxelSamples[j]);
         }
 
-        // A voxel with a sample inside (or on) the surface is a hit
+        // A voxel with a sample inside (or on) the surface needs to
+        // be intersection tested
         if (minVoxelSample <= 0.0)
         {
-            // A ray moving along the positive axis direction enters through the min face.
-            // This allows us to set the hit kind to the entered face:
-            // 0: +x, 1: -x, 2: +y, 3: -y, 4: +z, 5: -z
-            uint face = (2u * entryAxis) + ((gl_ObjectRayDirectionEXT[entryAxis] > 0.0) ? 1u : 0u);
-            reportIntersectionEXT(tVoxelEnter, face);
-            return;
+            float tVoxelFar = min(tVoxelExit, tEnd) - tVoxelEnter;
+            vec3 voxelLocalRayPos = brickLocalRayPos
+                + ((tVoxelEnter - tStart) * brickLocalRayDir)
+                - vec3(localVoxelIdx);
+            vec4 c = computeCubicCoefficients(voxelSamples, voxelLocalRayPos, brickLocalRayDir);
+            float tIntoVoxel;
+
+            if (tVoxelFar > 0.0
+                && findEnteringRoot(c, tVoxelFar, rootEpsilonT, tIntoVoxel))
+            {
+                // A ray moving along the positive axis direction enters through the min face.
+                // This allows us to set the hit kind to the entered face:
+                // 0: +x, 1: -x, 2: +y, 3: -y, 4: +z, 5: -z
+                uint face = (2u * entryAxis) + ((gl_ObjectRayDirectionEXT[entryAxis] > 0.0) ? 1u : 0u);
+                reportIntersectionEXT(tVoxelEnter + tIntoVoxel, face);
+                return;
+            }
         }
 
         // If the next voxel is out of range, return without reporting a hit
-        float tVoxelExit = min(min(tNext.x, tNext.y), tNext.z);
         if (tVoxelExit >= tEnd)
         {
             return;
