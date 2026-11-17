@@ -303,6 +303,7 @@ void main()
     // Compute the t value needed to traverse one full voxel along each axis
     vec3 tDelta = abs(1.0 / brickLocalRayDir);
 
+    bool doSolidFaceTest = (pc.flags & kFlagSolidFaceTest) != 0u;
     bool rayWasOutsideSurface = (tEnter >= gl_RayTminEXT);
     bool isShadowRay = (gl_IncomingRayFlagsEXT & gl_RayFlagsTerminateOnFirstHitEXT) != 0u;
     float rootEpsilonT = kVoxelLocalRootEpsilon / length(brickLocalRayDir);
@@ -349,7 +350,9 @@ void main()
             // (the trilinearly interpolated f) at the voxel entry point.
             //
             // Adapted from Soderlund et al. 2022, Section 2
-            if (rayWasOutsideSurface && c.x < 0.0)
+            if (doSolidFaceTest 
+                && rayWasOutsideSurface
+                && c.x < 0.0)
             {
                 hitAttributes.packedBrickLocalVoxelIdx = packBrickLocalVoxelIdx(uvec3(brickLocalVoxelIdx));
                 hitAttributes.voxelLocalPos = voxelLocalRayEntryPos;

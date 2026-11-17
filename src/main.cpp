@@ -49,6 +49,7 @@ enum RenderMode
 };
 
 static int renderMode = kRenderModePathTracer;
+static bool enableSolidFaceTest = true;
 
 float zoom, theta, phi;
 glm::vec3 cameraPosition;
@@ -201,6 +202,8 @@ bool init(const bricksutil::BricksFile* bricks)
     renderMode = scene->hasSdf ? kRenderModeDirectLighting : kRenderModePathTracer;
     updateRenderMode();
 
+    renderer->setSolidFaceTest(enableSolidFaceTest);
+
     return true;
 }
 
@@ -237,6 +240,12 @@ void RenderImGui()
         if (renderModeChanged)
         {
             updateRenderMode();
+        }
+
+        if (ImGui::Checkbox("Solid Face Test", &enableSolidFaceTest))
+        {
+            renderer->setSolidFaceTest(enableSolidFaceTest);
+            renderer->resetRenderedFrameCount();
         }
 
         // Each scope's GPU time, averaged over the last N frames
