@@ -44,7 +44,7 @@ const vec3 kDebugViewMissColor = vec3(0.1);
 // LightDir points towards the light
 const vec3 kLightDir = normalize(vec3(1.0, 1.0, 1.0));
 const float kAmbientLight = 0.4;
-const vec3 kSkyColor = vec3(1.0);
+const vec3 kSkyColor = vec3(0.5294, 0.8078, 0.9216);
 
 void main()
 {

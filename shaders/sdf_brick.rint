@@ -85,7 +85,9 @@ vec4 computeCubicCoefficients(float samples[8], vec3 o, vec3 d)
 
 // Given the coefficients of a cubic polynomial, return the t values
 // in the exclusive range (0, tFar) corresponding to the roots of its quadratic
-// derivative.
+// derivative. This allows us to break the [0, tFar] range into subintervals for
+// which the cubic polynomial is monotonically increasing/decreasing, which we in
+// turn can use for surface intersection testing.
 //
 // The roots are returned in increasing order, with tFar indicating
 // a non-existant root
