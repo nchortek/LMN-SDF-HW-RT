@@ -4,10 +4,13 @@
 #include "gputimer.h"
 #include "pipeline.h"
 #include "gpu/sdf_shared.h"
+#include "sdf/pruning.h"
+#include "sdf/baking.h"
 
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -16,22 +19,33 @@
 bool GpuScene::init(
     VulkanContext& context,
     const sceneutil::FlatScene& flatScene,
-    const bricksutil::BricksFile* bricks,
-    uint32_t sdfMaterialIdx)
+    uint32_t sdfMaterialIdx,
+    SdfPruning* pruning,
+    SdfBaking* baking)
 {
     m_context = &context;
 
     if (!createSceneDataBuffers(flatScene))
-    {
+{
         destroy();
         return false;
     }
 
-    // The SDF buffers must exist before the scene addresses buffer, which stores their address
-    if (bricks != nullptr && !createSdfBuffers(*bricks))
+    // SDF data comes from the GPU bake (CSG scenes) OR a .bricks file
+    uint32_t sdfBrickCount = 0;
+    bool hasSdfBricks = false;
+    // Only create SDF buffers if we have CSG scene
+    if (pruning != nullptr && baking != nullptr)
     {
-        destroy();
-        return false;
+        // Create the empty buffers then bake!
+        if (!createEmptySdfBuffers(*pruning) ||
+            !baking->runBaking(m_sdfSceneAddressesBuffer.deviceAddress, m_brickCountBuffer, m_aabbBuffer, sdfBrickCount))
+        {
+            destroy();
+            return false;
+        }
+        printf("SdfBaking: baked %u bricks\n", sdfBrickCount);
+        hasSdfBricks = true;
     }
 
     if (!createSceneAddressesBuffer(static_cast<uint32_t>(flatScene.lights.size()), flatScene.totalLightArea))
@@ -47,7 +61,7 @@ bool GpuScene::init(
     }
 
     VkDeviceSize sdfBlasScratchSize = 0;
-    if (bricks != nullptr && !createSdfBLAS(bricks->brickCount, sdfBlasScratchSize))
+    if (hasSdfBricks && !createSdfBLAS(sdfBrickCount, sdfBlasScratchSize))
     {
         destroy();
         return false;
@@ -110,6 +124,7 @@ void GpuScene::destroy()
     vkutil::destroyBuffer(*m_context, m_sampleBuffer);
     vkutil::destroyBuffer(*m_context, m_brickCountBuffer);
     vkutil::destroyBuffer(*m_context, m_sdfSceneAddressesBuffer);
+    vkutil::destroyBuffer(*m_context, m_brickBakeParamsBuffer);
 
     m_context = nullptr;
 }
@@ -263,6 +278,101 @@ bool GpuScene::createSdfBuffers(const bricksutil::BricksFile& bricks)
     sdfSceneAddresses.domainMin = glm::vec3(bricks.domainMin[0], bricks.domainMin[1], bricks.domainMin[2]);
     sdfSceneAddresses.voxelSize = bricks.voxelSize;
     sdfSceneAddresses.band = bricks.band;
+
+    if (!vkutil::createAndUploadBuffer(
+        *m_context,
+        &sdfSceneAddresses,
+        sizeof(sdfSceneAddresses),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        m_sdfSceneAddressesBuffer))
+    {
+        fprintf(stderr, "Failed to create the SDF scene addresses buffer on the GPU.\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool GpuScene::createEmptySdfBuffers(SdfPruning& pruning)
+{ 
+    // Initialize sdf buffers
+    if (!vkutil::createBuffer(*m_context, 
+        VkDeviceSize(gpu::MAX_BRICKS) * sizeof(gpu::Aabb), 
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        0, 
+        m_aabbBuffer
+    )) {
+        fprintf(stderr, "Failed to create the SDF AABB buffer on the GPU.\n");
+        return false;
+    }
+    
+    if (!vkutil::createBuffer(*m_context, 
+        VkDeviceSize(gpu::MAX_BRICKS) * sizeof(uint32_t),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        0,
+        m_mortonBuffer
+    )) {
+        fprintf(stderr, "Failed to create the SDF morton buffer on the GPU.\n");
+        return false;
+    }
+
+    if (!vkutil::createBuffer(*m_context, 
+        VkDeviceSize(gpu::MAX_BRICKS) * gpu::BRICK_STRIDE_WORDS * sizeof(uint32_t),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        0,
+        m_sampleBuffer
+    )) {
+        fprintf(stderr, "Failed to create the SDF sample buffer on the GPU.\n");
+        return false;
+    }
+
+    if (!vkutil::createBuffer(*m_context, 
+        sizeof(uint32_t),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        0,
+        m_brickCountBuffer
+    )) {
+        fprintf(stderr, "Failed to create the SDF brick count buffer on the GPU.\n");
+        return false;
+    }
+
+    // Upload BrickBakeParams: addresses of the pruning outputs the bake evaluates.
+    // runPruning() has already completed (its own submit + wait), so these are ready to read.
+    gpu::BrickBakeParams bakeParams{};
+    bakeParams.primsAddr = pruning.getPrims().deviceAddress;
+    bakeParams.binaryOpsAddr = pruning.getBinaryOps().deviceAddress;
+    bakeParams.nodesAddr = pruning.getNodes().deviceAddress;
+    bakeParams.activeNodesAddr = pruning.getFinalActiveNodes().deviceAddress;
+    bakeParams.cellOffsetsAddr = pruning.getFinalCellOffsets().deviceAddress;
+    bakeParams.cellNumActiveAddr = pruning.getFinalNumActive().deviceAddress;
+    bakeParams.cellErrorsAddr = pruning.getFinalCellErrors().deviceAddress;
+    bakeParams.brickCellsNumActiveAddr = pruning.getBrickNumActive().deviceAddress;
+    bakeParams.maxBricks = static_cast<int>(gpu::MAX_BRICKS);
+    bakeParams.totalNumNodes = pruning.getNodeCount();
+
+    if (!vkutil::createAndUploadBuffer(
+        *m_context,
+        &bakeParams,
+        sizeof(bakeParams),
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        m_brickBakeParamsBuffer))
+    {
+        fprintf(stderr, "Failed to create the brick bake params buffer on the GPU.\n");
+        return false;
+    }
+
+    // Upload SdfSceneAddresses buffer
+    glm::vec3 hi = pruning.getAabbMax();
+    glm::vec3 lo = pruning.getAabbMin();
+    gpu::SdfSceneAddresses sdfSceneAddresses{};
+    sdfSceneAddresses.aabbsAddr = m_aabbBuffer.deviceAddress;
+    sdfSceneAddresses.mortonsAddr = m_mortonBuffer.deviceAddress;
+    sdfSceneAddresses.samplesAddr = m_sampleBuffer.deviceAddress;
+    sdfSceneAddresses.brickCountAddr = m_brickCountBuffer.deviceAddress;
+    sdfSceneAddresses.domainMin = lo;
+    sdfSceneAddresses.voxelSize = (hi.x - lo.x) / gpu::VOXELS_PER_SCENE_AXIS;
+    sdfSceneAddresses.band = 2.0f * std::sqrt(3.0f) * sdfSceneAddresses.voxelSize; // MMELK TODO: to helper?
+    sdfSceneAddresses.brickBakeParamsAddr = m_brickBakeParamsBuffer.deviceAddress;
 
     if (!vkutil::createAndUploadBuffer(
         *m_context,
