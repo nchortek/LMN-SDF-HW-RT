@@ -17,6 +17,7 @@
 
 #include "sdf/bricks.h"
 #include "sdf/pruning.h"
+#include "sdf/baking.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -66,6 +67,7 @@ std::unique_ptr<VulkanContext> context;
 std::unique_ptr<Swapchain> swapchain;
 std::unique_ptr<GpuScene> gpuScene;
 std::unique_ptr<SdfPruning> sdfPruning;
+std::unique_ptr<SdfBaking> sdfBaking;
 std::unique_ptr<Renderer> renderer;
 
 GLFWwindow* window;
@@ -143,7 +145,7 @@ void updateRenderMode()
 }
 
 // Note: bricks is null when the scene has no SDF
-bool init(const bricksutil::BricksFile* bricks)
+bool init()
 {
     if (!initGLFW())
     {
@@ -168,21 +170,28 @@ bool init(const bricksutil::BricksFile* bricks)
         return false;
     }
 
-    // Initialize GPU scene data
-    gpuScene = std::make_unique<GpuScene>();
-    {
-        const sceneutil::FlatScene flatScene = sceneutil::flattenScene(*scene);
-        if (!gpuScene->init(*context, flatScene, bricks, scene->sdfMaterialIdx))
-        {
-            fprintf(stderr, "Failed to initialize GpuScene\n");
+    // Create SDF Pruning and Baking objs
+    if(scene->hasCsg) {
+        sdfPruning = std::make_unique<SdfPruning>();
+        if(!sdfPruning -> init(*context, *scene)) {
+            fprintf(stderr, "Failed to initialize SdfPruning\n");
+            return false;
+        }
+
+        sdfBaking = std::make_unique<SdfBaking>();
+        if(!sdfBaking -> init(*context)) {
+            fprintf(stderr, "Failed to initialize SdfBaking\n");
             return false;
         }
     }
 
-    if(scene->hasCsg){
-        sdfPruning = std::make_unique<SdfPruning>();
-        if(!sdfPruning -> init(*context, *scene)){
-            fprintf(stderr, "Failed to initialize SdfPruning\n");
+    // Initialize GPU scene data
+    gpuScene = std::make_unique<GpuScene>();
+    {
+        const sceneutil::FlatScene flatScene = sceneutil::flattenScene(*scene);
+        if (!gpuScene->init(*context, flatScene, scene->sdfMaterialIdx, sdfPruning.get(), sdfBaking.get()))
+        {
+            fprintf(stderr, "Failed to initialize GpuScene\n");
             return false;
         }
     }
@@ -306,6 +315,7 @@ void cleanup()
     
     renderer.reset();
     sdfPruning.reset();
+    sdfBaking.reset();
     gpuScene.reset();
     swapchain.reset();
     context.reset();
@@ -333,25 +343,6 @@ int main(int argc, char** argv)
     // Load scene file
     scene = new Scene(sceneFile);
 
-    // Once brick data is permanently stored on the GPU we can remove this
-    bricksutil::BricksFile bricks;
-    if (scene->hasSdf)
-    {
-        if (!bricksutil::readBricks(scene->sdfBricksPath.c_str(), bricks))
-        {
-            return 1;
-        }
-
-        printf("Loaded %s: brickCount %u, domainMin (%g, %g, %g), voxelSize %g, band %g\n",
-            scene->sdfBricksPath.c_str(),
-            bricks.brickCount,
-            bricks.domainMin[0],
-            bricks.domainMin[1],
-            bricks.domainMin[2],
-            bricks.voxelSize,
-            bricks.band);
-    }
-
     //Create Instance for ImGUIData
     guiData = new GuiDataContainer();
 
@@ -376,8 +367,7 @@ int main(int argc, char** argv)
     zoom = glm::length(cam.position - ogLookAt);
 
     // Initialize our rendering infrastructure
-    if (!init(scene->hasSdf ? &bricks : nullptr))
-    {
+    if (!init()) {
         // Initialization failed
         return 1;
     }

@@ -114,6 +114,7 @@ set(headers
     src/gpu/pruning_constants.h
     src/sdf/csg.h
     src/sdf/pruning.h
+    src/sdf/baking.h
 )
 
 set(sources
@@ -135,6 +136,7 @@ set(sources
     src/vk/utils/buffer.cpp
     src/sdf/csg.cpp
     src/sdf/pruning.cpp
+    src/sdf/baking.cpp
 )
 
 add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers})

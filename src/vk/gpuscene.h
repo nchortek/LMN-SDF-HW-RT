@@ -11,6 +11,8 @@
 
 class VulkanContext;
 class GpuTimer;
+class SdfPruning;
+class SdfBaking;
 
 class GpuScene
 {
@@ -31,8 +33,9 @@ public:
     bool init(
         VulkanContext& context,
         const sceneutil::FlatScene& flatScene,
-        const bricksutil::BricksFile* bricks,
-        uint32_t sdfMaterialIdx);
+        uint32_t sdfMaterialIdx,
+        SdfPruning* pruning,
+        SdfBaking* baking);
     void destroy();
 
     uint64_t getSceneAddresses() const
@@ -67,6 +70,9 @@ private:
     vkutil::Buffer m_sampleBuffer{};
     vkutil::Buffer m_brickCountBuffer{};
     vkutil::Buffer m_sdfSceneAddressesBuffer{};
+
+    // Pruning-output addresses the brick bake reads (CSG scenes only)
+    vkutil::Buffer m_brickBakeParamsBuffer{};
 
     struct AccelStructure
     {
@@ -150,5 +156,6 @@ private:
 
     bool createSceneDataBuffers(const sceneutil::FlatScene& flatScene);
     bool createSdfBuffers(const bricksutil::BricksFile& bricks);
+    bool createEmptySdfBuffers(SdfPruning& pruning);
     bool createSceneAddressesBuffer(uint32_t lightCount, float totalLightArea);
 };

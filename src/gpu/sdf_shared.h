@@ -36,10 +36,9 @@ struct Aabb
     vec3 maxValues;
 };
 
+// Baking inputs
 struct BrickBakeParams
 {
-    // Pruning inputs (device addresses)
-
     // Starting address of our buffer of SDF primitives
     uint64_t primsAddr;
 
@@ -72,7 +71,7 @@ struct BrickBakeParams
     
 };
 
-// Device buffer addresses for the SDF brick buffers
+// Device buffer addresses for the OUTPUT SDF brick buffers
 struct SdfSceneAddresses
 {
     // Starting address of our buffer of brick Aabb structs

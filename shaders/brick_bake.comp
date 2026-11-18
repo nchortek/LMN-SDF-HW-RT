@@ -25,25 +25,15 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) buffer UintOutRef {
     uint val;
 };
 
+layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer BrickBakeParamsBuffer {
+    BrickBakeParams params;
+};
+
 layout(push_constant, scalar) uniform BakePushConstantBlock {
     BakePushConstants pc;
 };
 
-#define BAKE_STUB 1
-
-// PLACEHOLDER until Luke finishes milestone 2 
-#ifdef BAKE_STUB
-const vec3 SPHERE_CENTER = vec3(0.f, 5.f, 0.f);
-const float SPHERE_RADIUS = 5.f;
-float sdf_active(vec3 p, int cell_idx, out bool near_field) {
-    near_field = true;
-    return length(p - SPHERE_CENTER) - SPHERE_RADIUS;
-}
-#endif
-
-#ifndef BAKE_STUB
-#include "eval.glsl"
-#endif
+#include "pruning/eval.glsl"
 
 shared float s_dists[BRICK_SAMPLES]; // Each SDF sampled dist in this brick
 shared uint s_min_abs; // smallest abs dist value. If no samples touch SDF surface, skip brick
@@ -57,15 +47,16 @@ void main() {
     UintArrayOutRef out_samples = UintArrayOutRef(sdf.samplesAddr);
     UintOutRef out_brick_count = UintOutRef(sdf.brickCountAddr);
 
+    // Pruning inputs- passed to sdf_active
+    BrickBakeParams params = BrickBakeParamsBuffer(sdf.brickBakeParamsAddr).params;
+
     ivec3 brick = ivec3(gl_WorkGroupID); // Work group idx
     uint brick_idx = morton_encode(brick); // 3D idx -> 1D idx (spatially ordered w/ morton)
 
-#ifndef BAKE_STUB
     // If there are zero CSG nodes in this brick then skip this ENTIRE work group!
-    if (brick_cells_num_active.tab[brick_idx] == 0) {
+    if (IntArrayRef(params.brickCellsNumActiveAddr).tab[brick_idx] == 0) {
         return;
     }
-#endif
 
     // Init min on first thread of each group
     if (gl_LocalInvocationIndex == 0) {
@@ -91,7 +82,7 @@ void main() {
 
         // Sample SDF!
         bool near_field;
-        float d = sdf_active(world_pos, prune_idx, near_field);
+        float d = sdf_active(world_pos, prune_idx, params, near_field);
 
         // Record
         s_dists[s] = d;
@@ -111,7 +102,7 @@ void main() {
         if (uintBitsToFloat(s_min_abs) < 0.5 * voxel_diag) {
             // Get dense index (remove empty spots)
             uint slot = uint(atomicAdd(out_brick_count.val, 1));
-            if (slot < MAX_BRICKS) {
+            if (slot < uint(params.maxBricks)) {
                 s_slot = slot;
             }
         }
