@@ -34,17 +34,19 @@ bool GpuScene::init(
     // SDF data comes from the GPU bake (CSG scenes) OR a .bricks file
     uint32_t sdfBrickCount = 0;
     bool hasSdfBricks = false;
-
-    // Create the empty buffers then bake!
-    if (!createEmptySdfBuffers(*pruning) ||
-        !baking->runBaking(m_sdfSceneAddressesBuffer.deviceAddress, m_brickCountBuffer, m_aabbBuffer, sdfBrickCount))
+    // Only create SDF buffers if we have CSG scene
+    if (pruning != nullptr && baking != nullptr)
     {
-        destroy();
-        return false;
+        // Create the empty buffers then bake!
+        if (!createEmptySdfBuffers(*pruning) ||
+            !baking->runBaking(m_sdfSceneAddressesBuffer.deviceAddress, m_brickCountBuffer, m_aabbBuffer, sdfBrickCount))
+        {
+            destroy();
+            return false;
+        }
+        printf("SdfBaking: baked %u bricks\n", sdfBrickCount);
+        hasSdfBricks = true;
     }
-    printf("SdfBaking: baked %u bricks\n", sdfBrickCount);
-    hasSdfBricks = true;
-
 
     if (!createSceneAddressesBuffer(static_cast<uint32_t>(flatScene.lights.size()), flatScene.totalLightArea))
     {
