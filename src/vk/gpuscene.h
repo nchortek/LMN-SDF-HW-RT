@@ -48,11 +48,32 @@ public:
         return m_TLAS.handle;
     }
 
+    uint64_t setSdfAabbAddress() const{
+        return m_aabbBuffer.deviceAddress;
+    }
+
+    uint64_t getSdfAabbAddress() const{
+        return m_aabbBuffer.deviceAddress;
+    }
+
+    uint32_t getSdfBrickCount() const{
+        return m_sdfBrickCount; //set in createSdfBLAS from the bake readback
+    }
+
     // Records this frame's SDF BLAS and TLAS builds, with the barriers that order them
     // against the previous frame's trace and this frame's trace. This must be called
     // before tracing if the scene contains SDFs.
     // gpuTimer records the GpuScope::SdfBlas and GpuScope::Tlas scopes.
     void recordSdfBuilds(VkCommandBuffer commandBuffer, GpuTimer& gpuTimer);
+
+    // Records a global memory barrier. Everything before it in submission order (including
+    // earlier frames' command buffers on this queue) is ordered against everything after it
+    static void recordMemoryBarrier(
+        VkCommandBuffer commandBuffer,
+        VkPipelineStageFlags2 srcStage,
+        VkAccessFlags2 srcAccess,
+        VkPipelineStageFlags2 dstStage,
+        VkAccessFlags2 dstAccess);
 
 private:
     VulkanContext* m_context = nullptr;
@@ -142,15 +163,6 @@ private:
         VkBuildAccelerationStructureFlagsKHR flags,
         const AccelStructure& accelStructure,
         VkDeviceAddress scratchAddress);
-
-    // Records a global memory barrier. Everything before it in submission order (including
-    // earlier frames' command buffers on this queue) is ordered against everything after it
-    static void recordMemoryBarrier(
-        VkCommandBuffer commandBuffer,
-        VkPipelineStageFlags2 srcStage,
-        VkAccessFlags2 srcAccess,
-        VkPipelineStageFlags2 dstStage,
-        VkAccessFlags2 dstAccess);
 
     void destroyAccelStructure(AccelStructure& accelStructure);
 

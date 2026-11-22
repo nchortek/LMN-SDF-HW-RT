@@ -10,6 +10,8 @@
 
 #include <array>
 #include <cstdint>
+#include "brickoverlay.h"
+#include "vk/utils/buffer.h"
 
 struct GLFWwindow;
 class VulkanContext;
@@ -41,6 +43,10 @@ public:
         return m_gui;
     }
 
+    BrickOverlay& getBrickOverlay(){
+        return m_brickOverlay;
+    }
+
     const GpuTimer& getGpuTimer() const
     {
         return m_gpuTimer;
@@ -49,6 +55,7 @@ public:
     void setCameraParams(const gpu::CameraParams& camera)
     {
         m_pushConstants.camera = camera;
+        m_brickOverlay.setCamera(camera, m_renderExtent);
     }
 
     void setDepthOfField(bool enabled)
@@ -123,6 +130,7 @@ private:
     GpuScene* m_gpuScene = nullptr;
     Pipeline m_pipeline;
     Gui m_gui;
+    BrickOverlay m_brickOverlay;
     GpuTimer m_gpuTimer;
 
     gpu::PushConstants m_pushConstants{};
@@ -162,6 +170,11 @@ private:
     bool createStorageImages();
     bool createStorageImage(VkFormat format, VkImageUsageFlags usage, StorageImage& storageImage);
     void destroyStorageImage(StorageImage& storageImage);
+
+#if BRICK_OVERLAY_DEPTH
+    vkutil::Buffer m_overlayDepthBuffer{};
+    bool createOverlayDepthBuffer();
+#endif
 
     bool createDescriptorPool();
     bool createRendererDescriptorSet(VkAccelerationStructureKHR TLAS);

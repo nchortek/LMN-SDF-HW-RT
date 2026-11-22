@@ -28,7 +28,7 @@ public:
     void beginFrame();
     void renderFrame();
 
-    void recordDrawCommands(VkCommandBuffer commandBuffer, VkImageView swapchainImageView, VkExtent2D extent);
+    void recordDrawCommands(VkCommandBuffer commandBuffer);
 
     bool wantsMouse() const;
 

@@ -81,6 +81,7 @@ void errorCallback(int error, const char* description);
 void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods);
 void mousePositionCallback(GLFWwindow* window, double xpos, double ypos);
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
 
 std::string currentTimeString()
 {
@@ -127,6 +128,7 @@ bool initGLFW()
     glfwSetKeyCallback(window, keyCallback);
     glfwSetCursorPosCallback(window, mousePositionCallback);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    glfwSetScrollCallback(window, scrollCallback);
 
     return true;
 }
@@ -255,6 +257,31 @@ void RenderImGui()
         {
             renderer->setSolidFaceTest(enableSolidFaceTest);
             renderer->resetRenderedFrameCount();
+        }
+
+        //Brick wireframe overlay
+        if(sdfPruning){
+            ImGui::SeparatorText("Brick Overlay");
+            BrickOverlay& overlay = renderer->getBrickOverlay();
+
+            static bool showBricks = false;
+            if(ImGui::Checkbox("Show Bricks", &showBricks)){
+                overlay.setEnabled(showBricks);
+            }
+            ImGui::Text("%u bricks", gpuScene->getSdfBrickCount());
+
+            const glm::vec3 lo = sdfPruning->getAabbMin();
+            const glm::vec3 hi = sdfPruning->getAabbMax();
+            const float brickSize = (hi.x-lo.x)/64.0f;
+            const float low = lo.y - brickSize;
+            const float high = hi.y + brickSize;
+            
+            static float sliceMin = low;
+            static float sliceMax = high;
+            ImGui::SliderFloat("Slice min Y", &sliceMin, low, high);
+            ImGui::SliderFloat("Slice max Y", &sliceMax, low, high);
+
+            overlay.setYParams(glm::vec4(sliceMin, sliceMax, sliceMin, sliceMax));
         }
 
         // Each scope's GPU time, averaged over the last N frames
@@ -453,6 +480,15 @@ void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
     middleMousePressed = (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS);
 }
 
+void scrollCallback(GLFWwindow* window, double xoffset, double yoffset){
+    if (renderer->getGui().wantsMouse()){
+        return; //prevent scrolling over imGui panel
+    }
+
+    zoom *= std::pow(0.9f, (float)yoffset); //zoom is the distance from the camera from lookAt, not the amount we're zooming
+    camchanged = true;
+}
+
 void mousePositionCallback(GLFWwindow* window, double xpos, double ypos)
 {
     if (xpos == lastX && ypos == lastY)
@@ -470,8 +506,15 @@ void mousePositionCallback(GLFWwindow* window, double xpos, double ypos)
     }
     else if (rightMousePressed)
     {
-        zoom += (ypos - lastY) / height;
-        zoom = std::fmax(0.1f, zoom);
+        renderState = &scene->state;
+        Camera& cam = renderState->camera;
+
+        //pixelLength = world size of one pixel at distance 1
+        const float dx = (float)(xpos - lastX) * zoom * cam.pixelLength.x;
+        const float dy = (float)(ypos - lastY) * zoom * cam.pixelLength.y;
+
+        cam.lookAt -= dx * cam.right;
+        cam.lookAt += dy * cam.up;
         camchanged = true;
     }
     else if (middleMousePressed)
