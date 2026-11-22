@@ -143,6 +143,18 @@ void updateRenderMode()
 {
     renderer->setDirectLightingMode(renderMode == kRenderModeDirectLighting);
     renderer->setDebugView(renderMode == kRenderModeDebugView);
+    
+    //brick wireframe colors
+    BrickOverlay& overlay = renderer->getBrickOverlay();
+    if(renderMode == kRenderModeDebugView){
+        overlay.setColorMode(gpu::OverlayColorBrickId);
+        overlay.setColor(glm::vec4(1.0f));
+    }
+    else if(scene->hasSdf){
+        overlay.setColorMode(gpu::OverlayColorAlbedo);
+        overlay.setColor(glm::vec4(scene->materials[scene->sdfMaterialIdx].color, 1.0f));
+    }
+    
     renderer->resetRenderedFrameCount();
 }
 
