@@ -29,6 +29,11 @@ bool Renderer::init(VulkanContext& context, Swapchain& swapchain, GLFWwindow* wi
         return false;
     }
 
+    if(!m_brickOverlay.init(context, swapchain.getFormat())){
+        destroy();
+        return false;
+    }
+
     if (!m_pipeline.init(context))
     {
         destroy();
@@ -65,6 +70,14 @@ bool Renderer::init(VulkanContext& context, Swapchain& swapchain, GLFWwindow* wi
         return false;
     }
 
+#if BRICK_OVERLAY_DEPTH
+    if (!createOverlayDepthBuffer())
+    {
+        destroy();
+        return false;
+    }
+#endif
+
     if (!createDescriptorPool())
     {
         destroy();
@@ -98,6 +111,10 @@ void Renderer::destroy()
     destroyStorageImage(m_displayImage);
     destroyStorageImage(m_accumImage);
 
+#if BRICK_OVERLAY_DEPTH
+    vkutil::destroyBuffer(*m_context, m_overlayDepthBuffer);
+#endif
+
     for (FrameData& frameData : m_frames)
     {
         frameData.commandBuffer = VK_NULL_HANDLE;
@@ -115,16 +132,32 @@ void Renderer::destroy()
     vkDestroyDescriptorPool(device, m_descriptorPool, nullptr);
     m_descriptorPool = VK_NULL_HANDLE;
     m_rendererDescriptorSet = VK_NULL_HANDLE;
-
     m_frames = {};
     m_frameInFlight = 0;
     m_gpuTimer.destroy();
     m_pipeline.destroy();
+    m_brickOverlay.destroy();
     m_gui.destroy();
     m_pushConstants = {};
     m_swapchain = nullptr;
     m_context = nullptr;
 }
+
+#if BRICK_OVERLAY_DEPTH
+bool Renderer::createOverlayDepthBuffer(){
+    //one float per traced pixel by render resolution, not swapchain resolution
+    const VkDeviceSize size = VkDeviceSize(m_renderExtent.width) * m_renderExtent.height * sizeof(float);
+    
+    if (!vkutil::createBuffer(*m_context, size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, m_overlayDepthBuffer)){
+        fprintf(stderr, "Failed to create the overlay depth buffer.\n");
+        return false;
+    }
+
+    m_pushConstants.overlayDepthAddr = m_overlayDepthBuffer.deviceAddress;
+    m_brickOverlay.setDepthBuffer(m_overlayDepthBuffer.deviceAddress, m_renderExtent);
+    return true;
+}
+#endif
 
 bool Renderer::drawFrame()
 {
@@ -645,6 +678,21 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         0,
         nullptr);
 
+#if BRICK_OVERLAY_DEPTH
+    // Raygen only writes depth while the overlay and its depth test are both on
+    const bool overlayDepth = m_brickOverlay.isEnabled();
+
+    if(overlayDepth){
+        m_pushConstants.flags |= gpu::kFlagOverlayDepth;
+
+        //write after read as the previous frame's overlay may still be reading this buffer
+        GpuScene::recordMemoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    }
+    else{
+        m_pushConstants.flags &= ~gpu::kFlagOverlayDepth;
+    }
+#endif
+
     // Update our push constants
     vkCmdPushConstants(
         commandBuffer,
@@ -668,6 +716,14 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         1);
 
     m_gpuTimer.end(commandBuffer, GpuScope::Trace);
+
+#if BRICK_OVERLAY_DEPTH
+    //read after write, raygen's depth writes must land before the overlay's fragment shader reads them
+    if (overlayDepth)
+    {
+        GpuScene::recordMemoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+    }
+#endif
 
     // Ensure that raygen's display image writes finish before the blit reads them
     recordImageBarrier(
@@ -736,10 +792,29 @@ bool Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t swapc
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-    m_gui.recordDrawCommands(
-        commandBuffer,
-        m_swapchain->getImageView(swapchainImageIndex),
-        swapchainExtent);
+    //one rendering scope on the swapchain image for everything drawn on top of the blitted trace (wireframes first, then imgui)
+    VkRenderingAttachmentInfo colorAttachment{};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAttachment.imageView = m_swapchain->getImageView(swapchainImageIndex);
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+    VkRenderingInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea.offset = {0,0};
+    renderingInfo.renderArea.extent = swapchainExtent;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+
+    vkCmdBeginRendering(commandBuffer, &renderingInfo);
+
+    m_brickOverlay.recordDrawCommands(commandBuffer, swapchainExtent, m_gpuScene->getSdfAabbAddress(), m_gpuScene->getSdfBrickCount());
+
+    m_gui.recordDrawCommands(commandBuffer);
+
+    vkCmdEndRendering(commandBuffer);
 
     // Transition into presentation layout once ImGui's writes are visible
     recordImageBarrier(

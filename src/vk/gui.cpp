@@ -115,28 +115,11 @@ void Gui::renderFrame()
     ImGui::Render();
 }
 
-void Gui::recordDrawCommands(VkCommandBuffer commandBuffer, VkImageView swapchainImageView, VkExtent2D swapchainExtent)
+//must be called inside an active dynmiac rendering scope of the swapchain image
+//old function did begin, ImGui, and end in one call, now ay to draw anything between begin and ImGui, so moved (alternative needed 2 scopes per frame)
+void Gui::recordDrawCommands(VkCommandBuffer commandBuffer)
 {
-    // We use a load op rather than clear, because ImGui is rendering on top of
-    // an image that HW RT has already filled
-    VkRenderingAttachmentInfo colorAttachment{};
-    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = swapchainImageView;
-    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-    VkRenderingInfo renderingInfo{};
-    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-    renderingInfo.renderArea.offset = { 0, 0 };
-    renderingInfo.renderArea.extent = swapchainExtent;
-    renderingInfo.layerCount = 1;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments = &colorAttachment;
-
-    vkCmdBeginRendering(commandBuffer, &renderingInfo);
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
-    vkCmdEndRendering(commandBuffer);
 }
 
 bool Gui::wantsMouse() const

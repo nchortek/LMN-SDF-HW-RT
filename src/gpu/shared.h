@@ -17,6 +17,7 @@ using uint = uint32_t;
 using vec2 = glm::vec2;
 using vec3 = glm::vec3;
 using vec4 = glm::vec4;
+using mat4 = glm::mat4;
 using uvec2 = glm::uvec2;
 GPU_NAMESPACE_END
 
@@ -48,6 +49,7 @@ GPU_NAMESPACE_END
 
 #endif
 
+#define BRICK_OVERLAY_DEPTH 1
 GPU_NAMESPACE_BEGIN
 
 // Constants for descriptor set numbers and binding indices
@@ -67,6 +69,7 @@ GPU_CONST uint kFlagDepthOfField = 0x1u;
 GPU_CONST uint kFlagDebugView = 0x2u;
 GPU_CONST uint kFlagDirectLighting = 0x4u;
 GPU_CONST uint kFlagSolidFaceTest = 0x8u;
+GPU_CONST uint kFlagOverlayDepth = 0x10u;
 
 // Misc.
 GPU_CONST uint kInstanceMaskAllBitsSet = 0xFFu;
@@ -177,6 +180,9 @@ struct PushConstants
     // of PushConstants as small as possible so we don't risk hitting
     // the 128 byte soft cap
     uint64_t sceneAddr;
+#if BRICK_OVERLAY_DEPTH
+    uint64_t overlayDepthAddr; //per-pixel viewspace depth of the primary hit, read by brick overlay
+#endif
     CameraParams camera;
     uint renderedFrameCount;
     uint maxDepth;

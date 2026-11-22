@@ -137,6 +137,7 @@ set(sources
     src/sdf/csg.cpp
     src/sdf/pruning.cpp
     src/sdf/baking.cpp
+    src/vk/brickoverlay.cpp
 )
 
 add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers})
@@ -207,6 +208,8 @@ set(shader_entry_points
     sdf.rchit
     pruning/culling.comp
     brick_bake.comp
+    brick_lines.vert
+    brick_lines.frag
 )
 
 if(shader_entry_points)

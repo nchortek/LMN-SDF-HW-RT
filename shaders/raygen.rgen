@@ -46,6 +46,27 @@ const vec3 kLightDir = normalize(vec3(1.0, 1.0, 1.0));
 const float kAmbientLight = 0.4;
 const vec3 kSkyColor = vec3(0.5294, 0.8078, 0.9216);
 
+#if BRICK_OVERLAY_DEPTH
+layout(buffer_reference, scalar, buffer_reference_align = 4) writeonly buffer OverlayDepthBuffer{
+    float depths[];
+};
+
+//misses are infinitely far
+const float kOverlayMissDepth = 1e30;
+
+//viewspace depth of the pixel's priamry hit for brick overlay's depth gl_RayFlagsTerminateOnFirstHitEXT
+void writeOverlayDepth(Ray ray, float t){
+    if((pc.flags & kFlagOverlayDepth) == 0){
+        return;
+    }
+
+    const float viewDepth = (t == kMiss) ? kOverlayMissDepth : t*dot(ray.direction, pc.camera.view);
+    const uvec2 pixel = gl_LaunchIDEXT.xy;
+    OverlayDepthBuffer(pc.overlayDepthAddr).depths[pixel.y*gl_LaunchSizeEXT.x + pixel.x] = viewDepth;
+}
+#endif
+
+
 void main()
 {
     initSeed(gl_LaunchIDEXT, gl_LaunchSizeEXT, pc.renderedFrameCount);
@@ -123,6 +144,10 @@ vec3 debugViewColor(Ray ray)
 {
     SurfaceInteraction surface = sceneIntersect(ray);
 
+#if BRICK_OVERLAY_DEPTH
+    writeOverlayDepth(ray, surface.isect.t);
+#endif
+
     if (surface.isect.t == kMiss)
     {
         return kDebugViewMissColor;
@@ -140,6 +165,10 @@ vec3 debugViewColor(Ray ray)
 vec3 directLightingColor(Ray ray)
 {
     SurfaceInteraction surface = sceneIntersect(ray);
+
+#if BRICK_OVERLAY_DEPTH
+    writeOverlayDepth(ray, surface.isect.t);
+#endif
 
     if (surface.isect.t == kMiss)
     {
@@ -426,6 +455,12 @@ vec3 li_mis(Ray ray)
     {
         vec3 woW = -1.f * ray.direction;
         SurfaceInteraction surface = sceneIntersect(ray);
+
+#if BRICK_OVERLAY_DEPTH
+        if (i == 0){
+            writeOverlayDepth(ray, surface.isect.t);
+        }
+#endif
 
         if (surface.isect.t == kMiss)
         {
