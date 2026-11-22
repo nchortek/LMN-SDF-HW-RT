@@ -26,6 +26,11 @@ GPU_CONST uint VOXELS_PER_SCENE_AXIS = 512;
 // How many pruning cells span the scene bbox per axis 
 GPU_CONST uint PRUNING_CELLS_PER_SCENE_AXIS = 256;
 
+//wireframe colorMode values
+GPU_CONST uint OverlayColorHeight = 0;
+GPU_CONST uint OverlayColorBrickId = 1;
+GPU_CONST uint OverlayColorAlbedo = 2; 
+
 // One brick's axis-aligned bounding box in world space.
 // This must match VkAabbPositionsKHR.
 struct Aabb
@@ -120,13 +125,15 @@ struct WireframePushConstants{
     uint renderWidth;
     uint padding; //keeps C++ and GLSL sizes equal (C++ pads to a multiple of 8 due to uint64_t members)
 #endif
+    uint colorMode;
+    uint padding2;
 };
 
 GPU_NAMESPACE_END
 
 #ifdef __cplusplus
 
-static_assert(sizeof(gpu::WireframePushConstants) == (BRICK_OVERLAY_DEPTH ? 128 : 104));
+static_assert(sizeof(gpu::WireframePushConstants) == (BRICK_OVERLAY_DEPTH ? 136  : 112));
 static_assert(sizeof(gpu::Aabb) == 24, "Our Aabb struct must match the size of VkAabbPositionsKHR.");
 static_assert(gpu::BRICK_STRIDE_WORDS * 4 >= gpu::BRICK_SAMPLES, "Each brick's samples must fit within its word count.");
 static_assert(sizeof(gpu::BrickBakeParams) == 8*8 + 2*4, "Size of BrickBakeParams must match expected value.");

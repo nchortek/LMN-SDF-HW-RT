@@ -1,6 +1,7 @@
 #version 460
 
 #include "common.glsl"
+#include "rng.glsl"
 
 //a push constant is a small block of data that you write directly into the command buffer with vkCmdPushConstants
 //vulkan glsl only allows uniforms inside blocks (uniform buffer boudn with a descriptor set, or a push constant block)
@@ -47,7 +48,14 @@ void main(){
 
     float centerNormalized = clamp((bcenterheight - pc.yParams.z) / (pc.yParams.w - pc.yParams.z), 0.0, 1.0);
 
-    if(centerNormalized < 0.5){
+    if(pc.colorMode == OverlayColorBrickId){
+        uint hash = utilhash(uint(brick)); //same as raygen.rgen
+        vertColor = vec3(hash & 0xFFu, (hash >> 8) & 0xFFu, (hash >> 16) & 0xFFu) / 255.0; 
+    }
+    else if(pc.colorMode == OverlayColorAlbedo){
+        vertColor = vec3(1.0); //frag multiplies by pc.color.rgb, so set to white
+    }
+    else if(centerNormalized < 0.5){
         vertColor = mix(vec3(0.0,0.0,1.0), vec3(0.0,1.0,0.0), centerNormalized*2);
     }
     else{

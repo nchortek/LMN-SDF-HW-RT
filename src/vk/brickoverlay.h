@@ -38,6 +38,9 @@ public:
     void setYParams(const glm::vec4& yParams) {
         m_pushConstants.yParams = yParams; 
     }
+    void setColorMode(uint32_t colorMode){
+        m_pushConstants.colorMode = colorMode;
+    }
 
 #if BRICK_OVERLAY_DEPTH
     //depth buffer and render size are fixed after startup
