@@ -12,10 +12,15 @@ layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer Bri
     BrickBakeParams params;
 };
 
+// Worldspace pos -> voxelspace pos [0, VOXELS_PER_SCENE_AXIS)
+vec3 worldToVoxel(vec3 worldPos, SdfSceneAddresses sdf) {
+    return (worldPos - sdf.domainMin) / sdf.voxelSize;
+}
+
 int csgCellIdx(vec3 worldPos, SdfSceneAddresses sdf) {
     // Worldspace pos -> voxelspace pos -> prunespace pos -> prune_idx
-    ivec3 voxelspace_pos = ivec3((worldPos - sdf.domainMin) / sdf.voxelSize);
-    ivec3 prunespace_pos = clamp(voxelspace_pos >> 1, ivec3(0), ivec3(255));
+    ivec3 voxelspace_pos = ivec3(floor(worldToVoxel(worldPos, sdf)));
+    ivec3 prunespace_pos = clamp(voxelspace_pos >> 1, ivec3(0), ivec3(int(PRUNING_CELLS_PER_SCENE_AXIS) - 1));
     int prune_idx = int(get_cell_idx(prunespace_pos, int(PRUNING_CELLS_PER_SCENE_AXIS)));
     return prune_idx;
 }

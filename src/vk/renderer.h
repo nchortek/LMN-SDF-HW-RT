@@ -82,6 +82,12 @@ public:
         }
     }
 
+    // mode is one of gpu::kDebugView*
+    void setDebugViewMode(uint32_t mode)
+    {
+        m_pushConstants.debugViewMode = mode;
+    }
+
     void setDirectLightingMode(bool enabled)
     {
         if (enabled)

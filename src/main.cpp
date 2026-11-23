@@ -50,6 +50,7 @@ enum RenderMode
 };
 
 static int renderMode = kRenderModePathTracer;
+static int debugViewMode = gpu::kDebugViewBricks;
 static bool enableSolidFaceTest = true;
 
 float zoom, theta, phi;
@@ -259,6 +260,19 @@ void RenderImGui()
         bool renderModeChanged = ImGui::RadioButton("Path Tracer", &renderMode, kRenderModePathTracer)
             || ImGui::RadioButton("Direct Lighting", &renderMode, kRenderModeDirectLighting)
             || ImGui::RadioButton("Debug View", &renderMode, kRenderModeDebugView);
+
+        // Debug view sub choice (bricks, pruning cells, or voxels)
+        if (renderMode == kRenderModeDebugView)
+        {
+            ImGui::Indent();
+            if (ImGui::RadioButton("Bricks", &debugViewMode, gpu::kDebugViewBricks)
+                || ImGui::RadioButton("Pruning Cells", &debugViewMode, gpu::kDebugViewCells)
+                || ImGui::RadioButton("Voxels", &debugViewMode, gpu::kDebugViewVoxels))
+            {
+                renderer->setDebugViewMode(debugViewMode);
+            }
+            ImGui::Unindent();
+        }
 
         if (renderModeChanged)
         {
