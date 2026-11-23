@@ -148,7 +148,8 @@ vec3 sdf_color_active(vec3 p, int cell_idx, BrickBakeParams params) {
             float r = float((prim.color >> 0) & 0xffu) / 255.0;
             float g = float((prim.color >> 8) & 0xffu) / 255.0;
             float b = float((prim.color >> 16) & 0xffu) / 255.0;
-            col = vec3(r, g, b);
+            col = vec3(r,g,b);
+            // col = pow(col, vec3(2.2));
         }
 
         d *= ActiveNode_sign(active_node) ? 1 : -1;

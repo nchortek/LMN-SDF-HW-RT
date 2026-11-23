@@ -6,7 +6,6 @@
 #include "common.glsl"
 #include "sdf_voxel.glsl"
 #include "pruning/csg_eval.glsl"
-#include "rng.glsl"
 
 // This shader will fill the payload, which is then read by raygen after calling traceRayEXT.
 // The location must match the payload location raygen passes to traceRayEXT.
