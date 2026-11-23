@@ -59,13 +59,19 @@ vec3 computeSurfaceNormal(float voxelSamples[8], vec3 voxelLocalSurfacePos)
     return vec3(dfdx, dfdy, dfdz);
 }
 
-vec3 computeCsgAlbedo(vec3 worldPos, SdfSceneAddresses sdf) {
-    if (sdf.brickBakeParamsAddr == uint64_t(0)) {
-        return vec3(-1.f);
+// Compute the normal we will use for shading for a hit. This will be the fully continous normal
+// from the CSG tree when it can be computed, otherwise it will be the trilinearly interpolated
+// normal from the SBS.
+vec3 computeShadingNormal(vec3 worldPos, vec3 trilinearNormal, SdfSceneAddresses sdfAddresses)
+{
+    vec3 csgNormal;
+
+    if (!computeCsgNormal(worldPos, sdfAddresses, csgNormal))
+    {
+        return trilinearNormal;
     }
-    return sdf_color_active(worldPos, 
-                            csgCellIdx(worldPos, sdf), 
-                            BrickBakeParamsBuffer(sdf.brickBakeParamsAddr).params);
+
+    return csgNormal;
 }
 
 void main()
@@ -90,11 +96,11 @@ void main()
 
     // This is equivalent to transpose(inverse(modelMatrix))
     mat3 normalMatrix = transpose(mat3(gl_WorldToObjectEXT));
-    vec3 worldNor = normalize(normalMatrix * objectNor);
+    vec3 worldGeometricNor = normalize(normalMatrix * objectNor);
 
     payload.worldPos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-    payload.worldShadingNor = worldNor;
-    payload.worldGeometricNor = worldNor;
+    payload.worldShadingNor = computeShadingNormal(payload.worldPos, worldGeometricNor, sdfAddresses);
+    payload.worldGeometricNor = worldGeometricNor;
     payload.uv = vec2(0.0);
     payload.materialIndex = gl_InstanceCustomIndexEXT;
     payload.primitiveId = gl_PrimitiveID;

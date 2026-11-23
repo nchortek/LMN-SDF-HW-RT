@@ -251,6 +251,7 @@ if(shader_entry_points)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/pruning/common.glsl)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/pruning/common_culling.glsl)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/pruning/extensions.glsl)
+    list(APPEND shader_sources ${SHADER_SRC_DIR}/pruning/csg_eval.glsl)
 
     list(APPEND shader_sources ${SHADER_SRC_DIR}/common.glsl)
     list(APPEND shader_sources ${SHADER_SRC_DIR}/math.glsl)
