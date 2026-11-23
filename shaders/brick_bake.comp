@@ -1,9 +1,6 @@
 #version 460 core
 #include "common.glsl"
-#include "gpu/sdf_shared.h"
-#include "gpu/pruning_constants.h"
-#include "pruning/extensions.glsl"
-#include "pruning/common.glsl"
+#include "pruning/csg_eval.glsl"
 
 #define USE_D_KEEP_TEST 0
 #define TIGHT_BRICKS 1
@@ -27,10 +24,6 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) buffer UintArrayOut
 // For single values
 layout(buffer_reference, scalar, buffer_reference_align = 4) buffer UintOutRef {
     uint val;
-};
-
-layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer BrickBakeParamsBuffer {
-    BrickBakeParams params;
 };
 
 layout(push_constant, scalar) uniform BakePushConstantBlock {

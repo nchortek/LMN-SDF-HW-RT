@@ -50,6 +50,7 @@ enum RenderMode
 };
 
 static int renderMode = kRenderModePathTracer;
+static int debugViewMode = gpu::kDebugViewBricks;
 static bool enableSolidFaceTest = true;
 
 float zoom, theta, phi;
@@ -158,8 +159,8 @@ void updateRenderMode()
     renderer->resetRenderedFrameCount();
 }
 
-// Note: bricks is null when the scene has no SDF
-bool init()
+// Note: bricks is null unless the scene's SDF comes from a .bricks file (no CSG)
+bool init(const bricksutil::BricksFile* bricks)
 {
     if (!initGLFW())
     {
@@ -203,7 +204,7 @@ bool init()
     gpuScene = std::make_unique<GpuScene>();
     {
         const sceneutil::FlatScene flatScene = sceneutil::flattenScene(*scene);
-        if (!gpuScene->init(*context, flatScene, scene->sdfMaterialIdx, sdfPruning.get(), sdfBaking.get()))
+        if (!gpuScene->init(*context, flatScene, scene->sdfMaterialIdx, sdfPruning.get(), sdfBaking.get(), bricks))
         {
             fprintf(stderr, "Failed to initialize GpuScene\n");
             return false;
@@ -259,6 +260,19 @@ void RenderImGui()
         bool renderModeChanged = ImGui::RadioButton("Path Tracer", &renderMode, kRenderModePathTracer)
             || ImGui::RadioButton("Direct Lighting", &renderMode, kRenderModeDirectLighting)
             || ImGui::RadioButton("Debug View", &renderMode, kRenderModeDebugView);
+
+        // Debug view sub choice (bricks, pruning cells, or voxels)
+        if (renderMode == kRenderModeDebugView)
+        {
+            ImGui::Indent();
+            if (ImGui::RadioButton("Bricks", &debugViewMode, gpu::kDebugViewBricks)
+                || ImGui::RadioButton("Pruning Cells", &debugViewMode, gpu::kDebugViewCells)
+                || ImGui::RadioButton("Voxels", &debugViewMode, gpu::kDebugViewVoxels))
+            {
+                renderer->setDebugViewMode(debugViewMode);
+            }
+            ImGui::Unindent();
+        }
 
         if (renderModeChanged)
         {
@@ -405,8 +419,28 @@ int main(int argc, char** argv)
     ogLookAt = cam.lookAt;
     zoom = glm::length(cam.position - ogLookAt);
 
+    // SDF scenes without a CSG tree load prebaked bricks from disk
+    bricksutil::BricksFile bricks;
+    const bool useBricksFile = scene->hasSdf && !scene->hasCsg;
+    if (useBricksFile)
+    {
+        if (!bricksutil::readBricks(scene->sdfBricksPath.c_str(), bricks))
+        {
+            return 1;
+        }
+
+        printf("Loaded %s: brickCount %u, domainMin (%g, %g, %g), voxelSize %g, band %g\n",
+            scene->sdfBricksPath.c_str(),
+            bricks.brickCount,
+            bricks.domainMin[0],
+            bricks.domainMin[1],
+            bricks.domainMin[2],
+            bricks.voxelSize,
+            bricks.band);
+    }
+
     // Initialize our rendering infrastructure
-    if (!init()) {
+    if (!init(useBricksFile ? &bricks : nullptr)) {
         // Initialization failed
         return 1;
     }

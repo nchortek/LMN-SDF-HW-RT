@@ -1,0 +1,42 @@
+{
+    "Materials": {
+        "sdf_white": {
+            "TYPE": "Diffuse",
+            "RGB": [
+                0.85,
+                0.85,
+                0.85
+            ]
+        }
+    },
+    "SDF": {
+        "CSG": "csg/test_union_hard.json",
+        "BRICKS": "sphere.bricks",
+        "MATERIAL": "sdf_white"
+    },
+    "Camera": {
+        "RES": [
+            1280,
+            720
+        ],
+        "FOVY": 45.0,
+        "ITERATIONS": 5000,
+        "DEPTH": 8,
+        "FILE": "sdf_test_union_hard",
+        "EYE": [
+            1.2,
+            1.0,
+            3.2
+        ],
+        "LOOKAT": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "UP": [
+            0.0,
+            1.0,
+            0.0
+        ]
+    }
+}

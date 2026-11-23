@@ -14,14 +14,16 @@
 #include <cstring>
 #include <limits>
 
-// Note: sdfMaterialIdx is the SDF's index into flatScene.materials, and is only used when 
-// bricks is non-null (i.e. when the scene includes SDFs).
+// Note: sdfMaterialIdx is the SDF's index into flatScene.materials, and is only used when
+// the scene includes an SDF: either a CSG tree (pruning + baking non-null) or a
+// prebaked .bricks file (bricks non-null). CSG takes precedence if both are given.
 bool GpuScene::init(
     VulkanContext& context,
     const sceneutil::FlatScene& flatScene,
     uint32_t sdfMaterialIdx,
     SdfPruning* pruning,
-    SdfBaking* baking)
+    SdfBaking* baking,
+    const bricksutil::BricksFile* bricks)
 {
     m_context = &context;
 
@@ -45,6 +47,17 @@ bool GpuScene::init(
             return false;
         }
         printf("SdfBaking: baked %u bricks\n", sdfBrickCount);
+        hasSdfBricks = true;
+    }
+    // Otherwise upload a prebaked .bricks file
+    else if (bricks != nullptr)
+    {
+        if (!createSdfBuffers(*bricks))
+        {
+            destroy();
+            return false;
+        }
+        sdfBrickCount = bricks->brickCount;
         hasSdfBricks = true;
     }
 

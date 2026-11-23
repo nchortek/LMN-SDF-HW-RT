@@ -84,6 +84,9 @@ struct IntersectionInfo
     // or the brick index for SDF bricks
     uint primitiveId;
 
+    // Positive color = color from CSG; negative color = use default color
+    vec3 albedo;
+
     // kMiss (-1.0) indicates a miss
     float t;
 };
@@ -173,6 +176,7 @@ IntersectionInfo getIntersectionInfo(
     isect.uv = uv;
     isect.materialIndex = geomInfo.materialIndex;
     isect.primitiveId = primitiveId;
+    isect.albedo = vec3(-1.f);
     isect.t = t;
 
     return isect;

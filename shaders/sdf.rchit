@@ -5,6 +5,7 @@
 #include "gpu/shared.h"
 #include "common.glsl"
 #include "sdf_voxel.glsl"
+#include "pruning/csg_eval.glsl"
 
 // This shader will fill the payload, which is then read by raygen after calling traceRayEXT.
 // The location must match the payload location raygen passes to traceRayEXT.
@@ -58,6 +59,15 @@ vec3 computeSurfaceNormal(float voxelSamples[8], vec3 voxelLocalSurfacePos)
     return vec3(dfdx, dfdy, dfdz);
 }
 
+vec3 computeCsgAlbedo(vec3 worldPos, SdfSceneAddresses sdf) {
+    if (sdf.brickBakeParamsAddr == uint64_t(0)) {
+        return vec3(-1.f);
+    }
+    return sdf_color_active(worldPos, 
+                            csgCellIdx(worldPos, sdf), 
+                            BrickBakeParamsBuffer(sdf.brickBakeParamsAddr).params);
+}
+
 void main()
 {
     SceneAddresses sceneAddresses = SceneAddressesBuffer(pc.sceneAddr).deviceAddresses;
@@ -88,5 +98,6 @@ void main()
     payload.uv = vec2(0.0);
     payload.materialIndex = gl_InstanceCustomIndexEXT;
     payload.primitiveId = gl_PrimitiveID;
+    payload.albedo = computeCsgAlbedo(payload.worldPos, sdfAddresses);
     payload.t = gl_HitTEXT;
 }

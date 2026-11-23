@@ -35,7 +35,8 @@ public:
         const sceneutil::FlatScene& flatScene,
         uint32_t sdfMaterialIdx,
         SdfPruning* pruning,
-        SdfBaking* baking);
+        SdfBaking* baking,
+        const bricksutil::BricksFile* bricks);
     void destroy();
 
     uint64_t getSceneAddresses() const

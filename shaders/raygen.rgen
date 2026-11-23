@@ -8,6 +8,7 @@
 #include "math.glsl"
 #include "bsdf.glsl"
 #include "sampleWarping.glsl"
+#include "pruning/csg_eval.glsl"
 
 layout(set = kRendererDescriptorSet, binding = kTLASBinding) uniform accelerationStructureEXT TLAS;
 layout(set = kRendererDescriptorSet, binding = kAccumImageBinding, rgba32f) uniform image2D accumImage;
@@ -153,8 +154,35 @@ vec3 debugViewColor(Ray ray)
         return kDebugViewMissColor;
     }
 
-    // Color each primitive based on the hash of its primitive ID
-    uint hash = utilhash(surface.isect.primitiveId);
+    // Pick the ID to color by (bricks, pruning cells, or voxels)
+    // Default to brick ID (aka primitive ID)
+    uint id = surface.isect.primitiveId;
+    // Otherwise unpack SDF data
+    if (pc.debugViewMode != kDebugViewBricks)
+    {
+        SceneAddresses sceneAddresses = SceneAddressesBuffer(pc.sceneAddr).deviceAddresses;
+        if (sceneAddresses.sdfAddr != uint64_t(0))
+        {
+            SdfSceneAddresses sdf = SdfSceneAddressesBuffer(sceneAddresses.sdfAddr).sdfDeviceAddresses;
+            vec3 voxelPos = worldToVoxel(surface.isect.worldPos, sdf);
+            if (all(greaterThanEqual(voxelPos, vec3(0.0)))
+                && all(lessThan(voxelPos, vec3(float(VOXELS_PER_SCENE_AXIS)))))
+            {
+                // Pruning cells
+                if (pc.debugViewMode == kDebugViewCells)
+                {
+                    id = uint(csgCellIdx(surface.isect.worldPos, sdf));
+                }
+                // Voxels
+                else
+                {
+                    id = morton_encode(ivec3(floor(voxelPos)));
+                }
+            }
+        }
+    }
+
+    uint hash = utilhash(id);
     vec3 primitiveColor = vec3(hash & 0xFFu, (hash >> 8) & 0xFFu, (hash >> 16) & 0xFFu) / 255.0;
     float facingRatio = abs(dot(surface.isect.worldGeometricNor, -ray.direction));
 
@@ -247,6 +275,12 @@ SurfaceInteraction sceneIntersect(Ray ray)
     // Set the material to what was hit
     SceneAddresses sceneAddresses = SceneAddressesBuffer(pc.sceneAddr).deviceAddresses;
     surface.material = MaterialBuffer(sceneAddresses.materialsAddr).materials[payload.materialIndex];
+
+    // Sample color from hit
+    if (payload.albedo.x >= 0.f) 
+    {
+        surface.material.baseColor = payload.albedo;
+    }
 
     if (surface.material.type != kSpecTrans
         && surface.material.type != kSpecGlass)

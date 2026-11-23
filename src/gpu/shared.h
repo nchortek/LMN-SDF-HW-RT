@@ -69,7 +69,11 @@ GPU_CONST uint kFlagDepthOfField = 0x1u;
 GPU_CONST uint kFlagDebugView = 0x2u;
 GPU_CONST uint kFlagDirectLighting = 0x4u;
 GPU_CONST uint kFlagSolidFaceTest = 0x8u;
-GPU_CONST uint kFlagOverlayDepth = 0x10u;
+GPU_CONST uint kFlagOverlayDepth = 0x100u;
+
+GPU_CONST uint kDebugViewBricks = 0;
+GPU_CONST uint kDebugViewCells = 1;
+GPU_CONST uint kDebugViewVoxels = 2;
 
 // Misc.
 GPU_CONST uint kInstanceMaskAllBitsSet = 0xFFu;
@@ -187,6 +191,7 @@ struct PushConstants
     uint renderedFrameCount;
     uint maxDepth;
     uint flags;
+    uint debugViewMode;
 };
 
 GPU_NAMESPACE_END
