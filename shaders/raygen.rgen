@@ -248,6 +248,12 @@ SurfaceInteraction sceneIntersect(Ray ray)
     SceneAddresses sceneAddresses = SceneAddressesBuffer(pc.sceneAddr).deviceAddresses;
     surface.material = MaterialBuffer(sceneAddresses.materialsAddr).materials[payload.materialIndex];
 
+    // Sample color from hit
+    if (payload.albedo.x >= 0.f) 
+    {
+        surface.material.baseColor = payload.albedo;
+    }
+
     if (surface.material.type != kSpecTrans
         && surface.material.type != kSpecGlass)
     {

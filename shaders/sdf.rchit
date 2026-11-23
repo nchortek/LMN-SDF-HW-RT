@@ -88,5 +88,7 @@ void main()
     payload.uv = vec2(0.0);
     payload.materialIndex = gl_InstanceCustomIndexEXT;
     payload.primitiveId = gl_PrimitiveID;
+    // payload.albedo = vec3(1.f, 0.f, 1.f);
+    payload.albedo = vec3(-1.f);
     payload.t = gl_HitTEXT;
 }
