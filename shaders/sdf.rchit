@@ -5,6 +5,8 @@
 #include "gpu/shared.h"
 #include "common.glsl"
 #include "sdf_voxel.glsl"
+#include "pruning/csg_eval.glsl"
+#include "rng.glsl"
 
 // This shader will fill the payload, which is then read by raygen after calling traceRayEXT.
 // The location must match the payload location raygen passes to traceRayEXT.
@@ -82,13 +84,20 @@ void main()
     mat3 normalMatrix = transpose(mat3(gl_WorldToObjectEXT));
     vec3 worldNor = normalize(normalMatrix * objectNor);
 
+
+
     payload.worldPos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
     payload.worldShadingNor = worldNor;
     payload.worldGeometricNor = worldNor;
     payload.uv = vec2(0.0);
     payload.materialIndex = gl_InstanceCustomIndexEXT;
     payload.primitiveId = gl_PrimitiveID;
-    // payload.albedo = vec3(1.f, 0.f, 1.f);
-    payload.albedo = vec3(-1.f);
+    // payload.albedo = vec3(-1.f);
     payload.t = gl_HitTEXT;
+
+    // DEBUG ALBEDO
+    uint hash = utilhash(uint(csgCellIdx(payload.worldPos, sdfAddresses)));
+    vec3 primitiveColor = vec3(hash & 0xFFu, (hash >> 8) & 0xFFu, (hash >> 16) & 0xFFu) / 255.0;
+    payload.albedo = primitiveColor;
+
 }
