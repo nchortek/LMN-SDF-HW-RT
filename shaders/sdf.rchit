@@ -60,6 +60,15 @@ vec3 computeSurfaceNormal(float voxelSamples[8], vec3 voxelLocalSurfacePos)
     return vec3(dfdx, dfdy, dfdz);
 }
 
+vec3 computeCsgAlbedo(vec3 worldPos, SdfSceneAddresses sdf) {
+    if (sdf.brickBakeParamsAddr == uint64_t(0)) {
+        return vec3(-1.f);
+    }
+    return sdf_color_active(worldPos, 
+                            csgCellIdx(worldPos, sdf), 
+                            BrickBakeParamsBuffer(sdf.brickBakeParamsAddr).params);
+}
+
 void main()
 {
     SceneAddresses sceneAddresses = SceneAddressesBuffer(pc.sceneAddr).deviceAddresses;
@@ -84,20 +93,12 @@ void main()
     mat3 normalMatrix = transpose(mat3(gl_WorldToObjectEXT));
     vec3 worldNor = normalize(normalMatrix * objectNor);
 
-
-
     payload.worldPos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
     payload.worldShadingNor = worldNor;
     payload.worldGeometricNor = worldNor;
     payload.uv = vec2(0.0);
     payload.materialIndex = gl_InstanceCustomIndexEXT;
     payload.primitiveId = gl_PrimitiveID;
-    // payload.albedo = vec3(-1.f);
+    payload.albedo = computeCsgAlbedo(payload.worldPos, sdfAddresses);
     payload.t = gl_HitTEXT;
-
-    // DEBUG ALBEDO
-    uint hash = utilhash(uint(csgCellIdx(payload.worldPos, sdfAddresses)));
-    vec3 primitiveColor = vec3(hash & 0xFFu, (hash >> 8) & 0xFFu, (hash >> 16) & 0xFFu) / 255.0;
-    payload.albedo = primitiveColor;
-
 }
