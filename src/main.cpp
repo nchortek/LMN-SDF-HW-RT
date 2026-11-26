@@ -152,8 +152,8 @@ void updateRenderMode()
         overlay.setColor(glm::vec4(1.0f));
     }
     else if(scene->hasSdf){
-        overlay.setColorMode(gpu::OverlayColorAlbedo);
-        overlay.setColor(glm::vec4(scene->materials[scene->sdfMaterialIdx].color, 1.0f));
+        overlay.setColorMode(gpu::OverlayColorHeight);
+        overlay.setColor(glm::vec4(1.0f));
     }
     
     renderer->resetRenderedFrameCount();
